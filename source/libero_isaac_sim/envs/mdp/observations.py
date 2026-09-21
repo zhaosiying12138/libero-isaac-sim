@@ -48,13 +48,22 @@ def robot0_gripper_qpos(env: ManagerBasedEnv) -> torch.Tensor:
     return robot.data.joint_pos.torch[:, g_ids]
 
 
+EEF_OFFSET_LOCAL = (0.0, 0.0, 0.097)  # gripper0_grip_site 相对 robot0_right_hand
+
+
 def robot0_eef_pos(env: ManagerBasedEnv) -> torch.Tensor:
+    """grip_site 帧的世界位置（hand 位姿 ∘ 局部偏移）。"""
     robot = _robot(env)
-    return robot.data.body_pose_w.torch[:, _eef_body_index(env), 0:3]
+    pose = robot.data.body_pose_w.torch[:, _eef_body_index(env)]
+    import isaaclab.utils.math as mu
+
+    offset = torch.tensor(EEF_OFFSET_LOCAL, device=pose.device).expand(pose.shape[0], 3)
+    off_w = mu.quat_apply(pose[:, 3:7], offset)
+    return pose[:, 0:3] + off_w
 
 
 def robot0_eef_quat(env: ManagerBasedEnv) -> torch.Tensor:
-    """wxyz 约定（与 LIBERO obs 一致）。"""
+    """wxyz 约定（与 LIBERO obs 一致）。grip_site 与 hand 同向（局部单位旋转）。"""
     robot = _robot(env)
     quat_xyzw = robot.data.body_pose_w.torch[:, _eef_body_index(env), 3:7]
     w = quat_xyzw[:, 3:4]

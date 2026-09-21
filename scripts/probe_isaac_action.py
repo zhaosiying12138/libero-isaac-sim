@@ -47,8 +47,20 @@ def main():
     ee_idx = robot.find_bodies("robot0_right_hand")[0][0]
 
     results = {}
+    # 固定 init state 0（与 MuJoCo 侧一致），禁用循环
+    term = env.cfg.events.reset_to_init
+    term.params["init_state_id"] = args.init_state_id
+    term.params["cycle"] = False
+    print("[diag] _physics_handles_decimation =", env._physics_handles_decimation)
     for name, act in probes.items():
         env.reset()
+        pose0 = robot.data.body_pose_w.torch[0, ee_idx].cpu().numpy()
+        print(f"[diag] {name} reset 后 EE = {np.round(pose0[:3] - origin, 4)}")
+        # 先看 settle：5 步零动作
+        for si in range(5):
+            env.step(torch.zeros((1, 7)))
+            pose_s = robot.data.body_pose_w.torch[0, ee_idx].cpu().numpy()
+            print(f"[diag] {name} settle{si} EE = {np.round(pose_s[:3] - origin, 4)}")
         action = torch.tensor([act], dtype=torch.float32)
         traj = []
         for _ in range(args.steps):

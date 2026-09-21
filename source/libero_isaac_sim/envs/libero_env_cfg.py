@@ -18,10 +18,9 @@ import torch
 import isaaclab.envs.mdp as mdp
 from isaaclab.controllers import OperationalSpaceControllerCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.envs.mdp.actions.actions_cfg import (
-    BinaryJointPositionActionCfg,
-    OperationalSpaceControllerActionCfg,
-)
+from isaaclab.envs.mdp.actions.actions_cfg import BinaryJointPositionActionCfg
+
+from libero_isaac_sim.envs.mdp.actions import LiberoOscActionCfg
 from isaaclab.managers import EventTermCfg, ObservationGroupCfg, ObservationTermCfg
 from isaaclab.managers import RewardTermCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -47,24 +46,29 @@ OSC_DAMPING_RATIO = 1.0
 class LiberoActionsCfg:
     """7 维 LIBERO 动作：6 维 EE 位姿增量（OSC）+ 1 维夹爪二值。"""
 
-    arm: OperationalSpaceControllerActionCfg = OperationalSpaceControllerActionCfg(
+    arm: LiberoOscActionCfg = LiberoOscActionCfg(
         asset_name="robot",
         joint_names=["robot0_joint[1-7]"],
         body_name="robot0_right_hand",
+        # robosuite OSC_POSE 的控制帧是 gripper0_grip_site（gripper0_eef 体），
+        # 位于 hand 下方 9.7cm 处（实测 MuJoCo 模型 body_pos z=0.097）
+        body_offset=LiberoOscActionCfg.OffsetCfg(pos=(0.0, 0.0, 0.097)),
         controller_cfg=OperationalSpaceControllerCfg(
             target_types=["pose_rel"],
             impedance_mode="fixed",
-            inertial_dynamics_decoupling=True,
+            inertial_dynamics_decoupling=os.environ.get("LIBERO_OSC_INERTIAL", "1") == "1",
             partial_inertial_dynamics_decoupling=False,
-            gravity_compensation=True,
+            gravity_compensation=os.environ.get("LIBERO_OSC_GRAVCOMP", "1") == "1",
             motion_stiffness_task=OSC_KP,
             motion_damping_ratio_task=OSC_DAMPING_RATIO,
             motion_control_axes_task=[1, 1, 1, 1, 1, 1],
-            nullspace_control="position",
+            nullspace_control=os.environ.get("LIBERO_OSC_NULLSPACE", "position"),
         ),
         position_scale=0.05,
         orientation_scale=0.5,
-        nullspace_joint_pos_target="default",
+        nullspace_joint_pos_target=(
+            "default" if os.environ.get("LIBERO_OSC_NULLSPACE", "position") == "position" else "none"
+        ),
     )
 
     gripper: BinaryJointPositionActionCfg = BinaryJointPositionActionCfg(
@@ -165,7 +169,11 @@ def make_libero_env_cfg(
     cfg = ManagerBasedRLEnvCfg()
     cfg.scene = scene_cfg
     cfg.actions = LiberoActionsCfg()
+    if os.environ.get("LIBERO_TEST_NO_GRIPPER") == "1":
+        del cfg.actions.gripper
     cfg.observations = LiberoObservationsCfg()
+    if os.environ.get("LIBERO_TEST_NO_CAM") == "1":
+        del cfg.observations.rgb
     cfg.events = LiberoEventsCfg()
     cfg.terminations = LiberoTerminationsCfg()
     cfg.rewards = LiberoRewardsCfg()

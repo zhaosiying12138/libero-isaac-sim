@@ -135,6 +135,7 @@ def build_scene_cfg(
             activate_contact_sensors=True,
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions=False,
+                fix_root_link=True,  # LIBERO 机器人基座固定（运行时 FixedJoint 由渲染补丁忽略）
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=0,
             ),
@@ -208,6 +209,15 @@ def build_scene_cfg(
             )
 
     # --- 相机 ---
+    if os.environ.get("LIBERO_TEST_NO_CAM") == "1":
+        SceneCfg = configclass(
+            type(f"LiberoSceneCfg_{task.task_name[:32]}", (InteractiveSceneCfg,), {})
+        )
+        cfg = SceneCfg(num_envs=num_envs, env_spacing=env_spacing)
+        for k, v in attrs.items():
+            setattr(cfg, k, v)
+        cfg.replicate_physics = False
+        return cfg
     cams = task.cameras
     attrs["agentview"] = _camera_cfg_from_manifest("agentview", cams["agentview"], None)
     wrist = cams["robot0_eye_in_hand"]

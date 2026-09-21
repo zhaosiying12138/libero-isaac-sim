@@ -49,5 +49,31 @@ def apply() -> None:
         )
 
     launch_cache._WarpLaunchCache.launch = _direct_launch
+
+    # ------------------------------------------------------------------
+    # 补丁 2：让 newton 的 USD 导入忽略 PhysX fix_root_link 运行时生成的
+    # 基座 FixedJoint（newton 导入器无法把 FixedJoint 并入 D6 关节组）。
+    # 渲染模型的 body 位姿每帧由 USD 变换推送，忽略该关节不影响画面。
+    # 注入点选在 ModelBuilder.add_usd，覆盖所有调用方（含可视化模型构建）。
+    # ------------------------------------------------------------------
+    try:
+        from newton._src.sim.builder import ModelBuilder
+
+        _orig_add_usd = ModelBuilder.add_usd
+        _ROBOT_FIXED_JOINT_RE = r"/World/envs/env_\d+/Robot/Geometry/robot0_base/FixedJoint"
+
+        def _add_usd_ignore_robot_fixed(self, *args, **kwargs):
+            existing = kwargs.get("ignore_paths")
+            if existing is None:
+                kwargs["ignore_paths"] = [_ROBOT_FIXED_JOINT_RE]
+            else:
+                kwargs["ignore_paths"] = [*existing, _ROBOT_FIXED_JOINT_RE]
+            return _orig_add_usd(self, *args, **kwargs)
+
+        ModelBuilder.add_usd = _add_usd_ignore_robot_fixed
+        print("[compat] newton 忽略基座 FixedJoint 补丁已应用")
+    except Exception as e:  # noqa: BLE001
+        print(f"[compat] newton 补丁跳过（{e}）")
+
     _APPLIED = True
     print("[compat] isaaclab 3.0 EA ProxyArray/launch_cache 补丁已应用")

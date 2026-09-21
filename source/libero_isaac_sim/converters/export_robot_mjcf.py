@@ -56,6 +56,22 @@ def export_robot(variant: str, out_dir: str) -> str:
     tmp_xml = os.path.join(out_dir, f"{variant}_full_scene.xml")
     os.makedirs(out_dir, exist_ok=True)
     mujoco.mj_saveLastXML(tmp_xml, env.sim.model._model)
+
+    # 先取质量/惯性/质心（close 之前），供 USD 转换后修正
+    import json as _json
+
+    masses = {}
+    m = env.sim.model
+    for i in range(m.nbody):
+        bname = m.body_id2name(i)
+        if not bname or not bname.startswith(_ROBOT_PREFIXES):
+            continue
+        masses[bname] = {
+            "mass": float(m.body_mass[i]),
+            "inertia": [float(v) for v in m.body_inertia[i]],
+            "com_local": [float(v) for v in m.body_ipos[i]],
+            "inertia_quat_wxyz": [float(v) for v in m.body_iquat[i]],
+        }
     env.close()
 
     tree = ET.parse(tmp_xml)
@@ -119,8 +135,13 @@ def export_robot(variant: str, out_dir: str) -> str:
 
     out_path = os.path.join(out_dir, f"{variant}.xml")
     tree.write(out_path, encoding="unicode")
+
+    mass_path = os.path.join(out_dir, f"{variant}_masses.json")
+    with open(mass_path, "w") as f:
+        _json.dump(masses, f, indent=2)
+
     print(f"[robot-export] {variant}: 裁剪掉非机器人 body: {removed}")
-    print(f"[robot-export] {variant} -> {out_path}")
+    print(f"[robot-export] {variant} -> {out_path}; 质量表 -> {mass_path}")
     return out_path
 
 

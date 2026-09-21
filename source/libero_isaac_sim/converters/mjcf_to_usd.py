@@ -336,6 +336,105 @@ def make_static_collision_shell(usd_path: str) -> int:
     return removed
 
 
+
+def fix_articulation_masses(usd_path: str, masses: dict) -> int:
+    """给关节体 USD 的每个 link 写入 MuJoCo 质量/惯性/质心。
+
+    机器人 USD 的 link prim 名与 MuJoCo body 名一致（robot0_link1 等）。
+    质量以覆盖形式写在主层（payload 结构保持不变）。
+    """
+    from pxr import Gf, Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    fixed = 0
+    for prim in stage.TraverseAll():
+        name = prim.GetName()
+        if name not in masses:
+            continue
+        entry = masses[name]
+        m = float(entry["mass"])
+        # PhysX 关节体不接受零/负质量 link（MuJoCo 的零质量虚拟 body 如
+        # robot0_base/gripper0_eef 在 PhysX 里会腐蚀质量矩阵），给个下限
+        if m < 1e-3:
+            m = 1e-3
+        mass_api = UsdPhysics.MassAPI.Apply(prim)
+        mass_api.GetMassAttr().Set(m)
+        if entry.get("com_local") is not None:
+            mass_api.GetCenterOfMassAttr().Set(
+                Gf.Vec3f(*[float(v) for v in entry["com_local"]])
+            )
+        if entry.get("inertia") is not None:
+            mass_api.GetDiagonalInertiaAttr().Set(
+                Gf.Vec3f(*[float(v) for v in entry["inertia"]])
+            )
+        fixed += 1
+    stage.GetRootLayer().Save()
+    return fixed
+
+
+
+def strip_custom_attrs(usd_path: str, prefixes: tuple = ("newton:",)) -> int:
+    """删除 USD（含 payloads 子层）中的自定义命名空间属性。
+
+    Isaac 的 MJCF 导入器会写入 ``newton:selfCollisionEnabled`` 等 Newton 专属
+    自定义属性；Isaac Lab 3.0 EA 的 ``modify_articulation_root_properties``
+    在调整关节体根属性时无法删除这些属性而直接报错（EA 缺陷）。
+    """
+    import glob as _glob
+    import os
+    from pxr import Sdf
+
+    def _strip_layer(layer):
+        removed = 0
+
+        def _walk_spec(spec):
+            nonlocal removed
+            for prop_name in list(spec.properties.keys()):
+                if any(prop_name.startswith(px) for px in prefixes):
+                    del spec.properties[prop_name]
+                    removed += 1
+            for child in spec.nameChildren.values():
+                _walk_spec(child)
+
+        for root_spec in layer.rootPrims:
+            _walk_spec(root_spec)
+        return removed
+
+    removed = 0
+    files = [usd_path]
+    payload_dir = os.path.join(os.path.dirname(usd_path), "payloads")
+    if os.path.isdir(payload_dir):
+        files += _glob.glob(os.path.join(payload_dir, "**", "*.usd*"), recursive=True)
+    for f in files:
+        layer = Sdf.Layer.FindOrOpen(f)
+        if layer is None:
+            continue
+        n = _strip_layer(layer)
+        if n:
+            layer.Save()
+            removed += n
+    return removed
+
+
+
+def add_world_fixed_joint(usd_path: str, child_body_path: str, joint_name: str = "world_fixed") -> str:
+    """在 USD 中给关节体根 link 显式添加 世界固定关节。
+
+    PhysX 约定：FixedJoint 不设 body0 即连接到世界。这样关节体基座固定，
+    不需要 Isaac Lab 的 fix_root_link 运行时补丁（它生成的运行时关节会让
+    newton 的 USD 导入器在合并关节时报错）。
+    """
+    from pxr import Sdf, Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    # 关节 prim 放在 child body 下（USD 惯例）
+    joint_path = f"{child_body_path}/{joint_name}"
+    joint = UsdPhysics.FixedJoint.Define(stage, joint_path)
+    joint.GetBody1Rel().SetTargets([Sdf.Path(child_body_path)])
+    stage.GetRootLayer().Save()
+    return joint_path
+
+
 def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> dict:
     """按任务 manifest 转换全部所需资产。"""
     from libero_isaac_sim.converters.asset_manifest import AssetRegistry

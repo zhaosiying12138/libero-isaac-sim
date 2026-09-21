@@ -25,7 +25,7 @@ from libero_isaac_sim.compat import isaaclab_ea_fixes
 
 isaaclab_ea_fixes.apply()
 
-from libero_isaac_sim.converters.mjcf_to_usd import audit_usd, convert_mjcf
+from libero_isaac_sim.converters.mjcf_to_usd import (audit_usd, convert_mjcf, fix_articulation_masses, strip_custom_attrs, add_world_fixed_joint)
 
 CACHE = os.path.expanduser("~/.cache/libero_isaac_sim")
 
@@ -36,6 +36,12 @@ def main():
         usd_dir = os.path.join(CACHE, "usd", "robots", variant)
         os.makedirs(usd_dir, exist_ok=True)
         usd_path = convert_mjcf(xml, usd_dir, fix_base=True, import_sites=True)
+        import json as _json
+        masses = _json.load(open(os.path.join(CACHE, "mjcf_robot", f"{variant}_masses.json")))
+        n = fix_articulation_masses(usd_path, masses)
+        print(f"[convert] {variant}: 写入 {n} 个 link 的质量")
+        n2 = strip_custom_attrs(usd_path)
+        print(f"[convert] {variant}: 剥除 newton 自定义属性 {n2} 个")
         report = audit_usd(usd_path)
         print(f"[convert] {variant} -> {usd_path}")
         print(f"[convert]   bodies={len(report['bodies'])} joints={len(report['joints'])}")
