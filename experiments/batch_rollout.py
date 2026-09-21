@@ -71,6 +71,12 @@ def main():
             except Exception as e:  # noqa: BLE001
                 print(f"[batch] {task[:40]} demo_{d} FAIL: {type(e).__name__}: {e}", flush=True)
         if results:
+            # 写每任务 summary.json（paired_rollout 的 main 才有这个副作用，批量模式补写）
+            import json as _json
+            task_dir = os.path.join(os.path.dirname(__file__), "..", "outputs", "paired_rollout", task)
+            os.makedirs(task_dir, exist_ok=True)
+            with open(os.path.join(task_dir, "summary.json"), "w") as f:
+                _json.dump(results, f, indent=2)
             agg = aggregate(task)
             rows.append(to_markdown_row(agg))
 
