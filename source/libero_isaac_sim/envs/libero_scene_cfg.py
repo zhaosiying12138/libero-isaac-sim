@@ -125,8 +125,9 @@ def build_scene_cfg(
     )
     init_qpos = task.robot["init_qpos"]
     joint_pos_init = {f"robot0_joint{i+1}": float(init_qpos[i]) for i in range(7)}
+    # 镜像手指关节：joint2 限位为负向（[-0.04, 0]），张开 = joint1 +0.04 / joint2 -0.04
     joint_pos_init["gripper0_finger_joint1"] = 0.04
-    joint_pos_init["gripper0_finger_joint2"] = 0.04
+    joint_pos_init["gripper0_finger_joint2"] = -0.04
     attrs["robot"] = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -173,7 +174,7 @@ def build_scene_cfg(
                     contact_offset=0.005, rest_offset=0.0
                 ),
             ),
-            init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
         )
 
     # --- fixtures（关节体或静态） ---

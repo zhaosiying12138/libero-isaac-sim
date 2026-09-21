@@ -158,13 +158,29 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
     # ------------------------------------------------------------------
     # 1. 静态实体清单：类别、关节、阈值、物理参数
     # ------------------------------------------------------------------
+    def _classify_joints(obj):
+        """把实体关节分成 articulation 关节与自由关节（freejoint 由根位姿覆盖）"""
+        joints_all = list(obj.joints) if obj.joints is not None else []
+        articulation_joints, free_joints = [], []
+        for jn in joints_all:
+            jid = model.joint_name2id(jn)
+            jtype = int(model.jnt_type[jid]) if jid >= 0 else -1
+            # 0=free 1=ball 2=slide 3=hinge
+            if jtype == 0:
+                free_joints.append(jn)
+            else:
+                articulation_joints.append(jn)
+        return articulation_joints, free_joints
+
     entities = {}
     for name, obj in list(env.env.objects_dict.items()):
+        aj, fj = _classify_joints(obj)
         entry = {
             "kind": "object",
             "category": obj.category_name,
             "root_body": obj.root_body,
-            "joints": list(obj.joints) if obj.joints is not None else [],
+            "joints": aj,
+            "free_joints": fj,
             "articulation_ranges": dict(
                 obj.object_properties.get("articulation", {})
             ),
@@ -183,11 +199,13 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
             ]
         entities[name] = entry
     for name, obj in list(env.env.fixtures_dict.items()):
+        aj, fj = _classify_joints(obj)
         entry = {
             "kind": "fixture",
             "category": obj.category_name,
             "root_body": obj.root_body,
-            "joints": list(obj.joints) if obj.joints is not None else [],
+            "joints": aj,
+            "free_joints": fj,
             "articulation_ranges": dict(
                 obj.object_properties.get("articulation", {})
             ),

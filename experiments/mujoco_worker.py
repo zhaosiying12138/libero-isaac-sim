@@ -179,6 +179,18 @@ class MujocoWorker:
             self.env.step(np.zeros(7))
         return {"state": self._semantic_state()}
 
+    def set_joints(self, joint7) -> dict:
+        """直接写机器人 7 关节角（用于 FK 对齐测试，不经控制器）。"""
+        sim, model = self.sim, self.model
+        arm_addrs = [
+            self._qpos_addr(j) for j in self.env.robots[0].robot_model.joints
+        ]
+        for a, v in zip(arm_addrs, joint7):
+            sim.data.qpos[a] = float(v)
+            # 同步目标缓存，避免 OSC 在下一步拉回去
+        sim.forward()
+        return {"state": self._semantic_state()}
+
     def step(self, action) -> dict:
         action = np.asarray(action, dtype=float)
         assert action.shape == (7,)
@@ -214,6 +226,8 @@ class MujocoWorker:
                     out = self.load(req["bddl"])
                 elif cmd == "reset":
                     out = self.reset(int(req["init_state_id"]))
+                elif cmd == "set_joints":
+                    out = self.set_joints(req["joints"])
                 elif cmd == "step":
                     out = self.step(req["action"])
                 elif cmd == "render":

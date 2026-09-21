@@ -96,8 +96,14 @@ def convert_mjcf(
     fix_base: bool,
     import_sites: bool = True,  # 保留参数位；3.0 新导入器默认导入 site，无独立开关
     link_density: float = 0.0,
+    make_instanceable: bool = False,
 ) -> str:
-    """调用 Isaac Lab MjcfConverter，返回主 USD 路径。"""
+    """调用 Isaac Lab MjcfConverter，返回主 USD 路径。
+
+    make_instanceable=False：instanceable 会把几何/关节收进 payload 层，
+    导致转换后修正（fix_object_physics 的 joint/mass 编辑）无法穿透引用层。
+    我们的资产规模小，不需要 instanceable。
+    """
     from isaaclab.sim.converters import MjcfConverter, MjcfConverterCfg
 
     cfg = MjcfConverterCfg(
@@ -106,6 +112,7 @@ def convert_mjcf(
         fix_base=fix_base,
         link_density=link_density,
         force_usd_conversion=True,
+        make_instanceable=make_instanceable,
     )
     converter = MjcfConverter(cfg)
     return converter.usd_path
@@ -143,6 +150,7 @@ def fix_object_physics(usd_path: str, mass: float, inertia_diag: list, com_local
         if prim.IsA(UsdPhysics.Joint):
             joint_count += 1
 
+    cleared_joints = []
     assert body_prims, f"{usd_path} 没有刚体"
     # 保留最外层刚体（遍历序最浅者），剥掉嵌套刚体的 RigidBodyAPI
     body_prims.sort(key=lambda p: len(str(p.GetPath())))
@@ -163,10 +171,13 @@ def fix_object_physics(usd_path: str, mass: float, inertia_diag: list, com_local
     # 单刚体物体：自由关节被导入器表达为「世界↔body 的 6DOF 关节 + ArticulationRoot」，
     # 物理上等价于自由刚体。剥掉关节 prim 与 ArticulationRootAPI，转成普通 RigidBody，
     # 以便用 RigidObjectCfg 管理（reset 写根位姿即可）。
-    if articulation_roots and len(body_prims) == 1:
+    if articulation_roots and (len(body_prims) - stripped_nested) == 1:
         removed_joints = 0
         for prim in list(stage.Traverse()):
-            if prim.IsA(UsdPhysics.Joint):
+            # 注意：导入器生成的 PhysicsFixedJoint 等自定义类型不匹配
+            # UsdPhysics.Joint 的 IsA 判定，按类型名/名字双判据兜底
+            tn = prim.GetTypeName()
+            if prim.IsA(UsdPhysics.Joint) or "Joint" in tn or "Joint" in prim.GetName():
                 prim.GetStage().RemovePrim(prim.GetPath())
                 removed_joints += 1
         for root in articulation_roots:
@@ -174,9 +185,45 @@ def fix_object_physics(usd_path: str, mass: float, inertia_diag: list, com_local
         stripped_articulation = True
         joint_count = 0
 
+    # 导入器把物理定义拆进 payloads/ 子层，主文件的编辑穿透不了引用层；
+    # 且残留的 over 块不是 defined prim，stage.Traverse 看不到。
+    # 改用 Sdf 层级 API 直接编辑 spec（能处理 over/def 一切 spec）。
+    from pxr import Sdf
+
+    payload_dir = os.path.join(os.path.dirname(usd_path), "payloads")
+    if os.path.isdir(payload_dir):
+        import glob as _glob
+
+        def _strip_specs(spec, path, changed_box):
+            for child in list(spec.nameChildren.values()):
+                child_path = f"{path}/{child.name}"
+                schemas = list(child.apiSchemas) if hasattr(child, "apiSchemas") else []
+                is_jointish = (
+                    "Joint" in child.name
+                    or any("Joint" in a for a in schemas)
+                    or "Joint" in (child.typeName or "")
+                )
+                if is_jointish:
+                    del spec.nameChildren[child.name]
+                    cleared_joints.append(child_path)
+                    changed_box[0] = True
+                    continue
+                _strip_specs(child, child_path, changed_box)
+
+        for sub in _glob.glob(os.path.join(payload_dir, "**", "*.usd*"), recursive=True):
+            layer = Sdf.Layer.FindOrOpen(sub)
+            if layer is None:
+                continue
+            changed_box = [False]
+            for root_spec in list(layer.rootPrims):
+                _strip_specs(root_spec, f"/{root_spec.name}", changed_box)
+            if changed_box[0]:
+                layer.Save()
+
     stage.GetRootLayer().Save()
     return {
         "cleared_zero_mass": cleared,
+        "cleared_joints": cleared_joints,
         "num_rigid_bodies_before": len(body_prims),
         "nested_rigid_bodies_stripped": stripped_nested,
         "articulation_stripped": stripped_articulation,

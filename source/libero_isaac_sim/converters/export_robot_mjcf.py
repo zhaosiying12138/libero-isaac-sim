@@ -107,6 +107,16 @@ def export_robot(variant: str, out_dir: str) -> str:
             if mesh.get("name") and mesh.get("name") not in used_meshes:
                 asset.remove(mesh)
 
+    # 归零机器人根 body 的位姿：mj_saveLastXML 会把场景中的基座偏移烘进
+    # body pos（如 living_room 的 (-0.51, 0, 0.42)）。机器人 USD 应在原点，
+    # 摆放位姿由 Isaac 环境的 InitialStateCfg 负责，否则会双重叠加。
+    for body in worldbody.findall("body"):
+        if _is_robot_body(body):
+            if body.get("pos"):
+                body.set("pos", "0 0 0")
+            if body.get("quat"):
+                body.set("quat", "1 0 0 0")
+
     out_path = os.path.join(out_dir, f"{variant}.xml")
     tree.write(out_path, encoding="unicode")
     print(f"[robot-export] {variant}: 裁剪掉非机器人 body: {removed}")
