@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libero-isaac-sim"
+version = "0.1.0"
+description = "LIBERO-10 benchmark ported to Isaac Sim / PhysX (Isaac Lab v3.0.0-EA) with cross-simulator equivalence verification"
+requires-python = ">=3.12,<3.13"
+# 注意：Isaac Lab v3.0.0-EA 与 Isaac Sim 6.1 不通过 pip 依赖声明，
+# 由 scripts/setup_env.sh 按 pin 的 tag 安装，避免解析冲突。
+dependencies = [
+    "numpy>=2",
+    "torch>=2.11",
+    "gymnasium>=1.2.0",
+    "h5py",
+    "imageio",
+    "imageio-ffmpeg",
+    "matplotlib",
+    "pyzmq",
+]
+
+[tool.setuptools.packages.find]
+where = ["source"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.yaml"]
