@@ -52,16 +52,25 @@ def find_object_xml(category: str, prefer_sanitized: bool = True) -> str:
     for d in OBJECT_ASSET_DIRS:
         p = os.path.join(LIBERO_ASSETS, d, category, f"{category}.xml")
         if os.path.exists(p):
-            sanitized = p.replace(".xml", "_sanitized.xml")
-            if prefer_sanitized and os.path.exists(sanitized):
-                return sanitized
+            for cand in [p.replace(".xml", "_dedup_sanitized.xml"),
+                         p.replace(".xml", "_sanitized.xml")]:
+                if prefer_sanitized and os.path.exists(cand):
+                    return cand
             return p
     p = os.path.join(LIBERO_ASSETS, "articulated_objects", f"{category}.xml")
     if os.path.exists(p):
-        sanitized = p.replace(".xml", "_sanitized.xml")
-        if prefer_sanitized and os.path.exists(sanitized):
-            return sanitized
+        for cand in [p.replace(".xml", "_dedup_sanitized.xml"),
+                     p.replace(".xml", "_sanitized.xml")]:
+            if prefer_sanitized and os.path.exists(cand):
+                return cand
         return p
+    # 类别名与目录名可能不一致（Python 类名压扁了数字前下划线，如
+    # chefmate_8_frypan → chefmate8_frypan）；数字前补下划线重试
+    import re as _re
+
+    alt = _re.sub(r"(\D)(\d)", r"\1_\2", category)
+    if alt != category:
+        return find_object_xml(alt, prefer_sanitized)
     raise FileNotFoundError(f"找不到类别 {category} 的 MJCF")
 
 

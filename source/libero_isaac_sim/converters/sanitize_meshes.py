@@ -61,15 +61,49 @@ def _export_mesh_to_obj(model, mesh_id: int, out_path: str) -> None:
                 f.write(f"f {a} {b} {c}\n")
 
 
+def _dedupe_texture_names(xml_path: str, out_path: str) -> None:
+    """把重名 texture name 改名后写到旁路副本（不污染上游资产）。"""
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    asset = root.find("asset")
+    if asset is None:
+        return
+    seen = {}
+    changed = False
+    for tex in asset.findall("texture"):
+        name = tex.get("name")
+        if name in seen:
+            seen[name] += 1
+            tex.set("name", f"{name}_dup{seen[name]}")
+            changed = True
+        else:
+            seen[name] = 0
+    if changed:
+        tree.write(out_path, encoding="unicode")
+        print(f"[sanitize] 纹理重名去重 -> {os.path.basename(out_path)}")
+
+
 def sanitize_xml(xml_path: str) -> str:
     """净化一个 MJCF：.msh → .obj。返回净化后的 xml 路径。"""
     import mujoco
 
     xml_dir = os.path.dirname(os.path.abspath(xml_path))
-    model = mujoco.MjModel.from_xml_path(xml_path)
+    compile_path = xml_path
+    try:
+        model = mujoco.MjModel.from_xml_path(xml_path)
+    except ValueError as e:
+        if "repeated name" in str(e):
+            # LIBERO 部分资产（flat_stove）纹理重名；写到旁路副本再编译，
+            # 不污染上游 LIBERO 资产
+            compile_path = xml_path.replace(".xml", "_dedup.xml")
+            _dedupe_texture_names(xml_path, compile_path)
+            model = mujoco.MjModel.from_xml_path(compile_path)
+        else:
+            raise
 
     # mesh 名 → 文件路径 映射来自 xml；网格数据来自编译后的 model
-    tree = ET.parse(xml_path)
+    # 若发生过去重，则源树也换为去重副本，保证 Isaac 侧不再遇重名
+    tree = ET.parse(compile_path)
     root = tree.getroot()
     asset = root.find("asset")
     if asset is None:
@@ -110,7 +144,7 @@ def sanitize_xml(xml_path: str) -> str:
     if not changed:
         return xml_path
 
-    out_path = xml_path.replace(".xml", "_sanitized.xml")
+    out_path = compile_path.replace(".xml", "_sanitized.xml")
     tree.write(out_path, encoding="unicode")
     print(f"[sanitize] {xml_path} -> {out_path}")
     return out_path
