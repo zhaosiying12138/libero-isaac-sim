@@ -111,13 +111,11 @@ class MujocoWorker:
         state["robot_joint_pos"] = [float(sim.data.qpos[a]) for a in arm_addrs]
         state["gripper_qpos"] = [float(sim.data.qpos[a]) for a in gripper_addrs]
 
-        # EE 位姿（robosuite eef body 名）
-        eef_body = self.env.robots[0].robot_model.eef_name
-        eef_id = model.body_name2id(eef_body)
-        state["eef_pos"] = [float(v) for v in sim.data.body_xpos[eef_id]]
-        state["eef_rotmat"] = _quat_wxyz_to_mat(
-            sim.data.body_xquat[eef_id]
-        ).reshape(-1).tolist()
+        # EE 位姿（robosuite OSC/obs 的控制帧：gripper0_grip_site site）
+        eef_site = "gripper0_grip_site"
+        eef_id = model.site_name2id(eef_site)
+        state["eef_pos"] = [float(v) for v in sim.data.site_xpos[eef_id]]
+        state["eef_rotmat"] = np.array(sim.data.site_xmat[eef_id]).reshape(3, 3).reshape(-1).tolist()
 
         bodies = {}
         for name in self.entities:
@@ -165,14 +163,17 @@ class MujocoWorker:
 
     # ------------------------------------------------------------------
     def reset(self, init_state_id: int) -> dict:
-        import torch
+        """回放实验：demo_i 的起始状态用 demo HDF5 的 attrs.init_state
+        （.pruned_init 是评测协议用的另一套状态，与示范动作不配套）。"""
+        import h5py
 
         task = os.path.splitext(os.path.basename(self._bddl))[0]
-        init_file = os.path.join(
-            LIBERO_REPO, "libero/libero/init_files/libero_10", f"{task}.pruned_init"
+        hdf5 = os.path.join(
+            LIBERO_REPO, "libero/datasets/libero_10", f"{task}_demo.hdf5"
         )
-        states = torch.load(init_file, map_location="cpu", weights_only=False)
-        state = states[init_state_id % len(states)]
+        with h5py.File(hdf5, "r") as f:
+            key = f"demo_{init_state_id}"
+            state = np.asarray(f["data"][key].attrs["init_state"])
         self.env.set_init_state(state)
         # 官方协议：稳定 5 步零动作
         for _ in range(5):

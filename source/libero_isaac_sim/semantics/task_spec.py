@@ -42,11 +42,17 @@ class InitState:
 
 @dataclass
 class TaskSemantics:
-    """一个 LIBERO 任务的全部仿真器无关语义。"""
+    """一个 LIBERO 任务的全部仿真器无关语义。
+
+    _npz：官方评测协议的 50 组固定状态（.pruned_init 导出）。
+    _demo_npz：每条示范录制时的真实起始状态（demo HDF5 attrs.init_state 导出），
+    回放实验必须用后者（动作序列与起始态配套）。
+    """
 
     task_name: str
     manifest: dict
     _npz: dict  # 延迟数组字典
+    _demo_npz: dict = field(default_factory=dict)
 
     # ---- 便捷访问 ----
     @property
@@ -94,9 +100,15 @@ class TaskSemantics:
     def joint_thresholds(self) -> Dict[str, dict]:
         return {n: e.get("joint_thresholds", {}) for n, e in self.entities.items()}
 
-    def get_init_state(self, index: int) -> InitState:
-        """取第 index 组官方初始状态（语义形式）。"""
-        i = index % self.num_init_states
+    def get_init_state(self, index: int, source: str = "pruned") -> InitState:
+        """取初始状态。source: "pruned"（官方评测协议）| "demo"（示范录制起始态）。"""
+        npz = self._npz
+        n = self.num_init_states
+        if source == "demo":
+            demo_path = os.path.join(
+                os.path.dirname(str(self.manifest.get("_manifest_dir", ""))) or ".", ""
+            )
+        i = index % n
         state = InitState(
             robot_joint_pos=np.asarray(self._npz["robot_joint_pos"][i]),
             gripper_qpos=np.asarray(self._npz["gripper_qpos"][i]),
@@ -124,7 +136,11 @@ def load_task(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> TaskSemanti
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
     npz = dict(np.load(npz_path)) if os.path.exists(npz_path) else {}
-    return TaskSemantics(task_name=task_name, manifest=manifest, _npz=npz)
+    demo_npz_path = os.path.join(cache_dir, f"{task_name}_demo_init_states.npz")
+    demo_npz = dict(np.load(demo_npz_path)) if os.path.exists(demo_npz_path) else {}
+    return TaskSemantics(
+        task_name=task_name, manifest=manifest, _npz=npz, _demo_npz=demo_npz
+    )
 
 
 def list_exported_tasks(cache_dir: str = DEFAULT_CACHE_DIR) -> List[str]:

@@ -40,6 +40,7 @@ class IsaacLiberoEnv:
         hold_steps: int = 1,
         max_steps: int = 600,
         settle_steps: int = 5,
+        init_source: str = "pruned",
     ):
         # 延迟到首次使用时创建，避免 import 期拉起 Isaac Sim
         self.task_name = task_name
@@ -47,6 +48,7 @@ class IsaacLiberoEnv:
         self.hold_steps = hold_steps
         self.max_steps = max_steps
         self.settle_steps = settle_steps
+        self.init_source = init_source
         self._env = None
         self._step_count = 0
         self._current_init_id = 0
@@ -78,10 +80,12 @@ class IsaacLiberoEnv:
             term = self._env.cfg.events.reset_to_init
             term.params["init_state_id"] = init_state_id
             term.params["cycle"] = False
+            term.params["init_source"] = self.init_source
         else:
             term = self._env.cfg.events.reset_to_init
             term.params["init_state_id"] = None
             term.params["cycle"] = True
+            term.params["init_source"] = self.init_source
 
         obs, _ = self._env.reset()
         zero = torch.zeros((1, 7))

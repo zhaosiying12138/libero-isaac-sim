@@ -39,6 +39,7 @@ def reset_to_libero_init_state(
     cache_dir: str,
     init_state_id: int | None = None,
     cycle: bool = True,
+    init_source: str = "pruned",
 ):
     """把 env_ids 指定的环境复位到 LIBERO 官方初始语义状态。
 
@@ -54,7 +55,7 @@ def reset_to_libero_init_state(
             _CYCLE_COUNTER[env_id] = _CYCLE_COUNTER.get(env_id, 0) + 1
         else:
             idx = 0
-        state = task.get_init_state(idx)
+        state = task.get_init_state(idx, source=init_source)
         _apply_state(env, env_id, task, state)
 
 

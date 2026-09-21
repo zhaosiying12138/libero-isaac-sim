@@ -413,12 +413,89 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
     return manifest
 
 
+def export_demo_init_states(bddl_file: str, demo_hdf5: str, out_dir: str) -> None:
+    """从 demo HDF5 的 attrs.init_state 提取每组示范的真实初始语义状态。
+
+    与 .pruned_init 不同源：pruned_init 是官方评测协议用的 50 个固定状态，
+    demo attrs.init_state 是每条示范录制时的真实起始状态（回放实验必须用它，
+    否则动作序列与初始状态不匹配）。
+    """
+    import h5py
+    import torch
+    from libero.libero.envs import OffScreenRenderEnv
+
+    task_name = os.path.splitext(os.path.basename(bddl_file))[0]
+    env = OffScreenRenderEnv(
+        bddl_file_name=bddl_file,
+        camera_names=["agentview", "robot0_eye_in_hand"],
+        camera_heights=128,
+        camera_widths=128,
+    )
+    env.reset()
+
+    with h5py.File(demo_hdf5, "r") as f:
+        demos = sorted(f["data"].keys(), key=lambda k: int(k.split("_")[1]))
+        n = len(demos)
+        # 读取实体清单（复用主导出的实体命名）
+        import json as _json
+
+        manifest_path = os.path.join(out_dir, f"{task_name}_manifest.json")
+        with open(manifest_path) as mf:
+            manifest = _json.load(mf)
+        entity_names = list(manifest["entities"].keys())
+
+        model = env.sim.model
+        sim = env.sim
+        arm_addrs = [
+            _qpos_addr(model, j) for j in env.robots[0].robot_model.joints
+        ]
+        gripper_addrs = [
+            _qpos_addr(model, j) for j in env.robots[0].gripper.joints
+        ]
+
+        data = {
+            "robot_joint_pos": np.zeros((n, 7)),
+            "gripper_qpos": np.zeros((n, 2)),
+        }
+        for name in entity_names:
+            data[f"pos::{name}"] = np.zeros((n, 3))
+            data[f"rotmat::{name}"] = np.zeros((n, 9))
+            joints = manifest["entities"][name]["joints"]
+            if joints:
+                data[f"joint::{name}"] = np.zeros((n, len(joints)))
+
+        for i, dname in enumerate(demos):
+            init_state = np.asarray(f["data"][dname].attrs["init_state"])
+            env.set_init_state(init_state)
+            sim.forward()
+            data["robot_joint_pos"][i] = [sim.data.qpos[a] for a in arm_addrs[:7]]
+            data["gripper_qpos"][i] = [sim.data.qpos[a] for a in gripper_addrs[:2]]
+            for name in entity_names:
+                body_id = env.env.obj_body_id[name]
+                data[f"pos::{name}"][i] = np.array(sim.data.body_xpos[body_id])
+                data[f"rotmat::{name}"][i] = _quat_wxyz_to_mat(
+                    sim.data.body_xquat[body_id]
+                ).reshape(-1)
+                joints = manifest["entities"][name]["joints"]
+                if joints:
+                    data[f"joint::{name}"][i] = [
+                        sim.data.qpos[_qpos_addr(model, j)] for j in joints
+                    ]
+        env.close()
+
+    out_path = os.path.join(out_dir, f"{task_name}_demo_init_states.npz")
+    np.savez_compressed(out_path, **data)
+    print(f"[export] {task_name}: {n} demo init states -> {out_path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bddl", type=str, default=None, help="单个 bddl 文件路径")
     parser.add_argument("--all-libero10", action="store_true", help="导出全部 10 个任务")
     parser.add_argument("--out-dir", type=str, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--num-init-states", type=int, default=None)
+    parser.add_argument("--demo-hdf5", type=str, default=None,
+                        help="同时从 demo HDF5 提取示范初始状态（回放实验用）")
     args = parser.parse_args()
 
     if args.all_libero10:
@@ -433,7 +510,9 @@ def main():
         bddl_files = [args.bddl]
 
     for bddl_file in bddl_files:
-        export_task(bddl_file, args.out_dir, args.num_init_states)
+        manifest = export_task(bddl_file, args.out_dir, args.num_init_states)
+        if args.demo_hdf5:
+            export_demo_init_states(bddl_file, args.demo_hdf5, args.out_dir)
 
 
 if __name__ == "__main__":
