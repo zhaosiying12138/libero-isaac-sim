@@ -28,6 +28,7 @@ from isaaclab.utils import configclass
 
 from libero_isaac_sim.converters.asset_manifest import AssetRegistry
 from libero_isaac_sim.envs.libero_scene_cfg import build_scene_cfg
+from libero_isaac_sim.envs.mdp import cameras as libero_cameras
 from libero_isaac_sim.envs.mdp import events as libero_events
 from libero_isaac_sim.envs.mdp import observations as libero_obs
 from libero_isaac_sim.envs.mdp import terminations as libero_terms
@@ -140,6 +141,11 @@ def make_libero_env_cfg(
 
     @configclass
     class LiberoEventsCfg:
+        align_cameras = EventTermCfg(
+            func=libero_cameras.align_cameras_to_manifest,
+            mode="startup",
+            params={"task_name": task_name, "cache_dir": cache_dir},
+        )
         reset_to_init = EventTermCfg(
             func=libero_events.reset_to_libero_init_state,
             mode="reset",

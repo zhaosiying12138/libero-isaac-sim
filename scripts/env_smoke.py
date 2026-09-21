@@ -17,6 +17,7 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--init-state-id", type=int, default=0)
+parser.add_argument("--task", type=str, default=None)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.headless = True
@@ -34,7 +35,7 @@ from libero_isaac_sim.envs.libero_env_cfg import make_libero_env_cfg
 from libero_isaac_sim.semantics.task_spec import load_task
 
 CACHE = os.path.expanduser("~/.cache/libero_isaac_sim")
-TASK = "LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket"
+TASK = args.task or "LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket"
 
 
 def main():
@@ -58,15 +59,15 @@ def main():
     rgb = cam.data.output["rgb"][0].cpu().numpy()
     import imageio
 
-    imageio.imwrite("/tmp/isaac_task0_agentview.png", rgb)
+    imageio.imwrite("/tmp/isaac_task_agentview.png", rgb)
     wrist = env.unwrapped.scene["robot0_eye_in_hand"].data.output["rgb"][0].cpu().numpy()
-    imageio.imwrite("/tmp/isaac_task0_wrist.png", wrist)
-    print("[env] saved /tmp/isaac_task0_agentview.png + wrist.png")
+    imageio.imwrite("/tmp/isaac_task_wrist.png", wrist)
+    print("[env] saved /tmp/isaac_task_agentview.png + wrist.png")
 
     # 与 MuJoCo 语义状态对比（init_state 0）
     task = load_task(TASK, CACHE)
     s0 = task.get_init_state(args.init_state_id)
-    for name in ["alphabet_soup_1", "basket_1"]:
+    for name in task.movable_objects()[:4]:
         asset = env.unwrapped.scene[name]
         pos = asset.data.root_pose_w.torch[0, :3].cpu().numpy()
         origin = env.unwrapped.scene.env_origins[0].cpu().numpy()

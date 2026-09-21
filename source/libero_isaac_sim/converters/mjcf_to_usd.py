@@ -469,6 +469,10 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
             usd_path = convert_mjcf(xml_path, usd_dir, fix_base=True)
             src_xml = xml_path
             fix_info = {}
+            n_attrs = strip_custom_attrs(usd_path)
+            flatten_usd(usd_path)  # fixture 拍平但保留关节（渲染需要穿透 payload）
+            if n_attrs:
+                print(f"[fix] {name}: 剥除 newton 自定义属性 {n_attrs} 个")
         report = audit_usd(usd_path)
         report.update(fix_info)
         report["category"] = category
@@ -511,7 +515,7 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
         json.dump(arena_report, f, indent=2, default=str)
     results["_arena"] = arena_report
     registry.register(
-        entity_name="_arena",
+        entity_name=f"_arena/{task_name}",
         category="arena",
         kind="arena",
         usd_path=arena_usd,

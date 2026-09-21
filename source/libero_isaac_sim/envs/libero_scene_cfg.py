@@ -86,6 +86,17 @@ def _camera_cfg_from_manifest(name: str, cam: dict, parent_prim: str | None) -> 
     )
 
 
+def _find_prim_path_by_name(usd_path: str, name: str) -> str:
+    """在 USD 中按 prim 名找完整路径（机器人 USD 的 body 嵌套很深）。"""
+    from pxr import Usd
+
+    stage = Usd.Stage.Open(usd_path)
+    for prim in stage.TraverseAll():
+        if prim.GetName() == name:
+            return str(prim.GetPath())
+    raise KeyError(f"{usd_path} 中找不到 prim {name}")
+
+
 def build_scene_cfg(
     task: TaskSemantics,
     registry: AssetRegistry,
@@ -104,7 +115,7 @@ def build_scene_cfg(
     attrs = {}
 
     # --- arena 静态外壳 ---
-    arena_usd = registry.usd_path("_arena")
+    arena_usd = registry.usd_path(f"_arena/{task.task_name}")
     attrs["arena"] = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Arena",
         spawn=sim_utils.UsdFileCfg(usd_path=arena_usd),
@@ -222,10 +233,14 @@ def build_scene_cfg(
     attrs["agentview"] = _camera_cfg_from_manifest("agentview", cams["agentview"], None)
     wrist = cams["robot0_eye_in_hand"]
     wrist_body = wrist["body"]  # robot0_right_hand
+    # 挂接点在机器人 USD 内的真实深层路径；spawn 到该路径下
+    hand_path_in_usd = _find_prim_path_by_name(robot_usd, wrist_body)
+    # USD 内路径以 defaultPrim（如 /base）开头；spawn 后挂在 {ENV_REGEX_NS}/Robot 下的相对部分
+    rel = hand_path_in_usd.split("/", 2)[-1]  # 去掉 "/<defaultPrim>/" 前缀
     attrs["robot0_eye_in_hand"] = _camera_cfg_from_manifest(
         "robot0_eye_in_hand",
         wrist,
-        parent_prim="{ENV_REGEX_NS}/Robot/" + wrist_body,
+        parent_prim="{ENV_REGEX_NS}/Robot/" + rel,
     )
 
     # 动态构造 configclass
