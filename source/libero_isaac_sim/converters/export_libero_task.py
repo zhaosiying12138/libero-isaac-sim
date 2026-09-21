@@ -260,16 +260,32 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
     robot_info = {
         "name": type(env.robots[0].robot_model).__name__,
         "init_qpos": [float(v) for v in env.robots[0].robot_model.init_qpos],
-        "base_pos": [
-            float(v) for v in sim.data.body_xpos[model.body_name2id("robot0_base")]
-        ]
-        if model.body_name2id("robot0_base") is not None
-        else None,
         "control_freq": float(env.env.control_freq),
         # robosuite OSC_POSE 默认输出限幅（与 suite.load_controller_config("OSC_POSE") 一致）
         "action_scale": {"pos_delta_m": 0.05, "rot_delta_rad": 0.5},
         "action_dim": 7,
     }
+    # 机器人基座与 EE 帧位姿（动作/观测帧对齐的依据）
+    try:
+        base_bid = _body_id(model, "robot0_base")
+        robot_info["base_pos"] = [float(v) for v in sim.data.body_xpos[base_bid]]
+        robot_info["base_rotmat"] = (
+            _quat_wxyz_to_mat(sim.data.body_xquat[base_bid]).reshape(-1).tolist()
+        )
+    except Exception:
+        robot_info["base_pos"] = None
+        robot_info["base_rotmat"] = None
+    try:
+        eef_name = env.robots[0].robot_model.eef_name
+        eef_bid = _body_id(model, eef_name)
+        robot_info["eef_body_name"] = eef_name
+        robot_info["eef_pos_at_init"] = [float(v) for v in sim.data.body_xpos[eef_bid]]
+        robot_info["eef_rotmat_at_init"] = (
+            _quat_wxyz_to_mat(sim.data.body_xquat[eef_bid]).reshape(-1).tolist()
+        )
+    except Exception as e:
+        robot_info["eef_body_name"] = None
+        robot_info["eef_error"] = str(e)
 
     # ------------------------------------------------------------------
     # 5. 50 组固定初始状态

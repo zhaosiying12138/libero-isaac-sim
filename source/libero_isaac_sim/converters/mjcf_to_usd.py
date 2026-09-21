@@ -102,7 +102,7 @@ def convert_mjcf(
     xml_path: str,
     usd_dir: str,
     fix_base: bool,
-    import_sites: bool = True,
+    import_sites: bool = True,  # 保留参数位；3.0 新导入器默认导入 site，无独立开关
     link_density: float = 0.0,
 ) -> str:
     """调用 Isaac Lab MjcfConverter，返回主 USD 路径。"""
@@ -112,7 +112,6 @@ def convert_mjcf(
         asset_path=xml_path,
         usd_dir=usd_dir,
         fix_base=fix_base,
-        import_sites=import_sites,
         link_density=link_density,
         force_usd_conversion=True,
     )
