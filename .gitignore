@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 本地产物：USD 资产缓存、导出的语义状态、实验输出（一律不入仓）
+*.usd
+*.usda
+*.usdc
+*.usdz
+assets_cache/
+outputs/
+runs/
+logs/
+*.hdf5
+*.npz
+*.mp4
+
+# 环境与工具
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Isaac / 仿真器
+*.tmp
+checkpoint*.pt
+wandb/
