@@ -60,13 +60,13 @@ def _camera_cfg_from_manifest(name: str, cam: dict, parent_prim: str | None) -> 
         offset = CameraCfg.OffsetCfg(
             pos=tuple(float(v) for v in cam["pos"]),
             rot=_quat_xyzw_from_rotmat(cam["rotmat"]),
-            convention="world",
+            convention="opengl",
         )
     else:
         offset = CameraCfg.OffsetCfg(
             pos=tuple(float(v) for v in cam["pos"]),
             rot=_quat_xyzw_from_rotmat(cam["rotmat"]),
-            convention="world",
+            convention="opengl",
         )
     from isaaclab_newton.renderers import NewtonWarpRendererCfg
 
@@ -75,7 +75,7 @@ def _camera_cfg_from_manifest(name: str, cam: dict, parent_prim: str | None) -> 
         update_period=0,
         height=cam["height"],
         width=cam["width"],
-        data_types=["rgb"],
+        data_types=["rgb", "normals"],
         renderer_cfg=NewtonWarpRendererCfg(),
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=focal,

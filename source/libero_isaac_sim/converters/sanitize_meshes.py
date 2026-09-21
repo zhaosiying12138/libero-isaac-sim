@@ -100,6 +100,10 @@ def sanitize_xml(xml_path: str) -> str:
         _export_mesh_to_obj(model, mesh_id, obj_path)
         new_ref = os.path.join(os.path.dirname(file_attr), obj_name)
         mesh_elem.set("file", new_ref)
+        # 净化 OBJ 用的是 mujoco 编译后的顶点（已含原始 scale），
+        # 必须把 mesh 的 scale 属性归一，否则导入器二次缩放
+        if mesh_elem.get("scale"):
+            mesh_elem.set("scale", "1 1 1")
         changed = True
         print(f"[sanitize] {name}: {file_attr} -> {new_ref}")
 

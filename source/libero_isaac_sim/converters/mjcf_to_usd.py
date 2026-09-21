@@ -221,6 +221,7 @@ def fix_object_physics(usd_path: str, mass: float, inertia_diag: list, com_local
                 layer.Save()
 
     stage.GetRootLayer().Save()
+    flatten_usd(usd_path)
     return {
         "cleared_zero_mass": cleared,
         "cleared_joints": cleared_joints,
@@ -271,6 +272,68 @@ def audit_usd(usd_path: str) -> dict:
                     if not os.path.exists(p):
                         report["missing_refs"].append(str(asset_path.path))
     return report
+
+
+
+def flatten_usd(usd_path: str) -> str:
+    """把 USD 拍平成单文件（烘焙 instanceable/reference/payload 结构）。
+
+    Isaac 的新 MJCF 导入器产物采用 payloads + instanceable 分层结构，
+    Newton 渲染器与部分物理路径不穿透实例代理。拍平后所有 prim 直接可见，
+    纹理引用为绝对路径（转换时已解析）。覆盖写回原路径。
+    """
+    from pxr import Usd
+
+    stage = Usd.Stage.Open(usd_path)
+    flat = stage.Flatten()
+    tmp = usd_path + ".flat_tmp"
+    flat.Export(tmp)
+    os.replace(tmp, usd_path)
+    return usd_path
+
+
+
+def strip_all_joints(usd_path: str) -> int:
+    """移除 USD 中全部关节 prim（用于纯静态 arena）。
+
+    Newton 模型构建器拒绝「不属于任何 articulation 的孤儿关节」，
+    静态外壳里的固定关节（如桌腿拼接）对我们无意义，直接删除。
+    """
+    from pxr import Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    removed = 0
+    for prim in list(stage.TraverseAll()):
+        tn = prim.GetTypeName()
+        if prim.IsA(UsdPhysics.Joint) or "Joint" in tn or "Joint" in prim.GetName():
+            stage.RemovePrim(prim.GetPath())
+            removed += 1
+    if removed:
+        stage.GetRootLayer().Save()
+    return removed
+
+
+
+def make_static_collision_shell(usd_path: str) -> int:
+    """把 USD 里的 RigidBodyAPI 全部剥掉，使其成为静态碰撞壳。
+
+    arena（地板/墙/桌面/背景）在 LIBERO 中本来就是静态的；
+    转换器 fix_base=True 会给它们加 RigidBodyAPI（负质量警告 + 网格碰撞
+    不被 PhysX 动态刚体支持）。剥掉后按 USD 规则成为静态碰撞体。
+    """
+    from pxr import Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    removed = 0
+    for prim in stage.TraverseAll():
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            prim.RemoveAPI(UsdPhysics.RigidBodyAPI)
+            removed += 1
+        if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+            prim.RemoveAPI(UsdPhysics.ArticulationRootAPI)
+    if removed:
+        stage.GetRootLayer().Save()
+    return removed
 
 
 def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> dict:
@@ -338,7 +401,12 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
     arena_dir = os.path.join(usd_root, "arenas", os.path.basename(os.path.dirname(scene_xml)))
     os.makedirs(arena_dir, exist_ok=True)
     arena_usd = convert_mjcf(scene_xml, arena_dir, fix_base=True)
+    n_joints_removed = strip_all_joints(arena_usd)
+    n_rb_removed = make_static_collision_shell(arena_usd)
+    flatten_usd(arena_usd)
     arena_report = audit_usd(arena_usd)
+    arena_report["joints_removed"] = n_joints_removed
+    arena_report["rigid_bodies_removed"] = n_rb_removed
     arena_report["scene_xml"] = scene_xml
     with open(os.path.join(arena_dir, "_report_arena.json"), "w") as f:
         json.dump(arena_report, f, indent=2, default=str)
