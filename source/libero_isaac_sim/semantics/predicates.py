@@ -127,7 +127,13 @@ class PredicateLib:
             and np.linalg.norm(tgt_pos[:2] - obj_pos[:2]) < 0.03
         )
 
+    def _resolve_entity(self, entity: str) -> str:
+        if entity in self.sites and self.sites[entity].get("parent_name"):
+            return self.sites[entity]["parent_name"]
+        return entity
+
     def pred_open(self, view: SemanticStateView, entity: str) -> bool:
+        entity = self._resolve_entity(entity)
         """官方语义：任一关节落在 open 区间即视为 open（is_open 的循环逻辑）。"""
         lo, hi = self._range(entity, "default_open_ranges")
         for j in range(view.num_joints(entity)):
@@ -140,6 +146,7 @@ class PredicateLib:
         return False
 
     def pred_close(self, view: SemanticStateView, entity: str) -> bool:
+        entity = self._resolve_entity(entity)
         """官方语义：所有关节都在 close 区间内才算 close。"""
         lo, hi = self._range(entity, "default_close_ranges")
         for j in range(view.num_joints(entity)):
@@ -149,6 +156,7 @@ class PredicateLib:
         return True
 
     def pred_turnon(self, view: SemanticStateView, entity: str) -> bool:
+        entity = self._resolve_entity(entity)
         """官方 FlatStove.turn_on 语义：任一关节 qpos >= min(turnon_ranges)。"""
         lo, hi = self._range(entity, "default_turnon_ranges")
         for j in range(view.num_joints(entity)):
@@ -157,6 +165,7 @@ class PredicateLib:
         return False
 
     def pred_turnoff(self, view: SemanticStateView, entity: str) -> bool:
+        entity = self._resolve_entity(entity)
         lo, hi = self._range(entity, "default_turnoff_ranges")
         for j in range(view.num_joints(entity)):
             q = view.joint_qpos(entity, j)
@@ -172,6 +181,11 @@ class PredicateLib:
     # 阈值判定的方向性：与官方各类的逐一实现对应
     # ------------------------------------------------------------------
     def _range(self, entity: str, key: str) -> tuple[float, float]:
+        # site region 的关节谓词落到其父实体的阈值（官方 SiteObjectState 语义）
+        if entity in self.sites:
+            parent = self.sites[entity].get("parent_name")
+            if parent:
+                entity = parent
         r = self.joint_thresholds.get(entity, {}).get(key)
         assert r is not None and len(r) == 2, f"{entity} 缺少 {key} 阈值"
         return float(r[0]), float(r[1])

@@ -284,6 +284,28 @@ def audit_usd(usd_path: str) -> dict:
 
 
 
+def _remove_orphan_prototypes(stage) -> int:
+    """删除 flatten 残留的孤儿原型根（Flattened_Prototype_* 等无 defaultPrim 的顶层）。
+
+    这些是 instanceable 内容拍平后的原型残片，留在文件里会让 spawn 的
+    prim 解析匹配到多个同名 prim。
+    """
+    from pxr import Usd
+
+    removed = 0
+    default_prim = stage.GetDefaultPrim()
+    default_path = str(default_prim.GetPath()) if default_prim else None
+    for prim in list(stage.GetPseudoRoot().GetChildren()):
+        name = prim.GetName()
+        if default_path and str(prim.GetPath()) == default_path:
+            continue
+        # 无类型或 Prototype 残片：删除
+        if prim.GetTypeName() in ("", None) or "Prototype" in name or name.startswith("Flattened_"):
+            stage.RemovePrim(prim.GetPath())
+            removed += 1
+    return removed
+
+
 def flatten_usd(usd_path: str) -> str:
     """把 USD 拍平成单文件（烘焙 instanceable/reference/payload 结构）。
 
@@ -295,9 +317,15 @@ def flatten_usd(usd_path: str) -> str:
 
     stage = Usd.Stage.Open(usd_path)
     flat = stage.Flatten()
-    tmp = usd_path + ".flat_tmp"
+    tmp = usd_path + ".flat_tmp.usda"
     flat.Export(tmp)
+    # 重新打开拍平文件清理孤儿原型，再落盘
+    stage2 = Usd.Stage.Open(tmp)
+    n = _remove_orphan_prototypes(stage2)
+    stage2.GetRootLayer().Save()
     os.replace(tmp, usd_path)
+    if n:
+        print(f"[flatten] {os.path.basename(usd_path)}: 清理孤儿原型 {n} 个")
     return usd_path
 
 
@@ -486,6 +514,31 @@ def _add_fixture_world_joint(usd_path: str) -> None:
     stage.GetRootLayer().Save()
 
 
+
+def dedupe_rigid_body_apis(usd_path: str) -> int:
+    """只保留最外层刚体的 RigidBodyAPI（剥掉嵌套内层的）。
+
+    对「单刚体」资产（无关节 fixture / 单刚体物体）：嵌套刚体 API 会让
+    Isaac Lab 的刚体解析匹配到多个 prim 而报错。
+    """
+    from pxr import Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    bodies = []
+    for prim in stage.TraverseAll():
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            bodies.append(prim)
+    if len(bodies) <= 1:
+        return 0
+    bodies.sort(key=lambda p: len(str(p.GetPath())))
+    removed = 0
+    for prim in bodies[1:]:
+        prim.RemoveAPI(UsdPhysics.RigidBodyAPI)
+        removed += 1
+    stage.GetRootLayer().Save()
+    return removed
+
+
 def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> dict:
     """按任务 manifest 转换全部所需资产。"""
     from libero_isaac_sim.converters.asset_manifest import AssetRegistry
@@ -524,6 +577,13 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
             flatten_usd(usd_path)  # fixture 拍平但保留关节（渲染需要穿透 payload）
             # fixture 基座固定由转换器自身的根焊接关节承担（fix_base=True 产物），
             # 场景侧与 USD 侧都不再额外加关节（多加会触发 newton 的合并缺陷）。
+            if not entity["joints"]:
+                # 无关节 fixture（如 wine_rack / desk_caddy）：剥内部焊接关节 +
+                # 去重嵌套刚体 API，成为单一运动学刚体
+                n_j = strip_all_joints(usd_path)
+                n_rb = dedupe_rigid_body_apis(usd_path)
+                if n_j or n_rb:
+                    print(f"[fix] {name}: 无关节 fixture 剥关节 {n_j} + 嵌套刚体 {n_rb} 个")
             if n_attrs:
                 print(f"[fix] {name}: 剥除 newton 自定义属性 {n_attrs} 个")
         report = audit_usd(usd_path)

@@ -223,10 +223,15 @@ def build_scene_cfg(
                 },
             )
         else:
-            attrs[name] = AssetBaseCfg(
+            # 无关节 fixture（如 desk_caddy）：每个 episode 仍需按初始状态重摆位，
+            # 用运动学刚体（kinematic rigid body）：物理中静止、reset 时可写位姿
+            attrs[name] = RigidObjectCfg(
                 prim_path="{ENV_REGEX_NS}/" + name,
-                spawn=sim_utils.UsdFileCfg(usd_path=entry["usd_path"]),
-                init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
+                spawn=sim_utils.UsdFileCfg(
+                    usd_path=entry["usd_path"],
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+                ),
+                init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
             )
 
     # --- 相机 ---

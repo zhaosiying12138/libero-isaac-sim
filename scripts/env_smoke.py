@@ -74,9 +74,9 @@ def main():
         pos = pos - origin
         print(f"[env] {name} isaac={np.round(pos, 3)} mujoco={np.round(s0.entities[name].pos, 3)}")
 
+    print("[env] OK")
     env.close()
     app.close()
-    print("[env] OK")
 
 
 if __name__ == "__main__":
