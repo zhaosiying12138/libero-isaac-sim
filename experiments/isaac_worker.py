@@ -140,6 +140,10 @@ class IsaacWorker:
         self.env.reset(init_state_id=init_state_id)
         return {"state": self._semantic_state()}
 
+    def reset_semantics(self, sem: dict) -> dict:
+        self.env.reset_from_semantics(sem)
+        return {"state": self._semantic_state()}
+
     def step(self, action) -> dict:
         obs, reward, done, info = self.env.step(np.asarray(action, dtype=float))
         return {
@@ -168,6 +172,8 @@ class IsaacWorker:
                     out = self.load(req["task"])
                 elif cmd == "reset":
                     out = self.reset(int(req["init_state_id"]))
+                elif cmd == "reset_semantics":
+                    out = self.reset_semantics(req["semantics"])
                 elif cmd == "step":
                     out = self.step(req["action"])
                 elif cmd == "render":

@@ -94,7 +94,11 @@ def _apply_state(env: ManagerBasedEnv, env_id: int, task, state) -> None:
             # fixture articulation：根位姿 + 关节角
             asset.write_root_pose_to_sim(root_pose, env_ids=env_ids_t)
             asset.write_root_velocity_to_sim(root_vel, env_ids=env_ids_t)
-            if ent_state.joints is not None and len(ent_state.joints) > 0:
+            if (
+                ent_state.joints is not None
+                and len(ent_state.joints) > 0
+                and hasattr(asset.data, "joint_pos")
+            ):
                 jp = asset.data.joint_pos.torch[env_id].clone()
                 jp[:] = torch.tensor(ent_state.joints, dtype=torch.float32)[
                     : jp.numel()

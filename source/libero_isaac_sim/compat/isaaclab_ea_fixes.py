@@ -24,6 +24,8 @@
 
 from __future__ import annotations
 
+import os
+
 import warp as wp
 
 _APPLIED = False
@@ -60,7 +62,7 @@ def apply() -> None:
         from newton._src.sim.builder import ModelBuilder
 
         _orig_add_usd = ModelBuilder.add_usd
-        _ROBOT_FIXED_JOINT_RE = r"/World/envs/env_\d+/Robot/Geometry/robot0_base/FixedJoint"
+        _ROBOT_FIXED_JOINT_RE = r".*/FixedJoint$"
 
         def _add_usd_ignore_robot_fixed(self, *args, **kwargs):
             existing = kwargs.get("ignore_paths")
@@ -68,6 +70,10 @@ def apply() -> None:
                 kwargs["ignore_paths"] = [_ROBOT_FIXED_JOINT_RE]
             else:
                 kwargs["ignore_paths"] = [*existing, _ROBOT_FIXED_JOINT_RE]
+            # 焊接关节合并进父体（否则删关节后图断开成多根）
+            kwargs.setdefault("collapse_fixed_joints", True)
+            if os.environ.get("LIBERO_DEBUG_IGNORE"):
+                print(f"[compat-debug] add_usd ignore_paths={kwargs['ignore_paths']}")
             return _orig_add_usd(self, *args, **kwargs)
 
         ModelBuilder.add_usd = _add_usd_ignore_robot_fixed

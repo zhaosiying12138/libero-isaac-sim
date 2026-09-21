@@ -435,6 +435,48 @@ def add_world_fixed_joint(usd_path: str, child_body_path: str, joint_name: str =
     return joint_path
 
 
+
+def strip_joints_by_type(usd_path: str, remove_types: tuple = ("FixedJoint", "PhysicsFixedJoint")) -> int:
+    """按类型删除 USD 中的关节（用于 fixture：删除焊接 FixedJoint，保留铰链/滑轨）。
+
+    焊缝关节的两侧 body 在 MJCF 中本来就刚性相连；删除后形状仍随父体渲染，
+    不影响画面与铰链动力学。
+    """
+    from pxr import Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    removed = 0
+    for prim in list(stage.TraverseAll()):
+        if prim.GetTypeName() in remove_types or (
+            prim.IsA(UsdPhysics.FixedJoint)
+        ):
+            stage.RemovePrim(prim.GetPath())
+            removed += 1
+    if removed:
+        stage.GetRootLayer().Save()
+    return removed
+
+
+
+def _add_fixture_world_joint(usd_path: str) -> None:
+    """在 fixture USD 的关节体根 body 上加 世界固定关节（body0 缺省=世界）。"""
+    from pxr import Sdf, Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    root_body = None
+    for prim in stage.TraverseAll():
+        if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+            root_body = prim
+            break
+    if root_body is None:
+        # 没有 articulation：纯静态 fixture，无需关节
+        return
+    joint_path = f"{root_body.GetPath()}/WorldFixedJoint"
+    joint = UsdPhysics.FixedJoint.Define(stage, joint_path)
+    joint.GetBody1Rel().SetTargets([Sdf.Path(str(root_body.GetPath()))])
+    stage.GetRootLayer().Save()
+
+
 def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> dict:
     """按任务 manifest 转换全部所需资产。"""
     from libero_isaac_sim.converters.asset_manifest import AssetRegistry
@@ -471,6 +513,8 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
             fix_info = {}
             n_attrs = strip_custom_attrs(usd_path)
             flatten_usd(usd_path)  # fixture 拍平但保留关节（渲染需要穿透 payload）
+            # fixture 基座固定由转换器自身的根焊接关节承担（fix_base=True 产物），
+            # 场景侧与 USD 侧都不再额外加关节（多加会触发 newton 的合并缺陷）。
             if n_attrs:
                 print(f"[fix] {name}: 剥除 newton 自定义属性 {n_attrs} 个")
         report = audit_usd(usd_path)

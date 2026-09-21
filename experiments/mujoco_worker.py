@@ -88,7 +88,12 @@ class MujocoWorker:
         )
         for name in self.entities:
             obj = self.env.env.get_object(name)
-            self.entity_joints[name] = list(obj.joints) if obj.joints else []
+            raw = list(obj.joints) if obj.joints else []
+            # 排除 freejoint（jnt_type==0），自由关节的位姿已由根位姿覆盖
+            self.entity_joints[name] = [
+                j for j in raw
+                if int(self.model.jnt_type[self.model.joint_name2id(j)]) != 0
+            ]
         self.site_names = list(self.env.env.object_sites_dict.keys())
         return {"task": os.path.splitext(os.path.basename(bddl))[0]}
 
@@ -180,6 +185,14 @@ class MujocoWorker:
             self.env.step(np.zeros(7))
         return {"state": self._semantic_state()}
 
+    def reset_flat(self, flat_state) -> dict:
+        """从任意 MuJoCo 扁平状态复位（分段回放的段起点）。"""
+        self.env.set_init_state(np.asarray(flat_state))
+        self.env.sim.forward()
+        for _ in range(5):
+            self.env.step(np.zeros(7))
+        return {"state": self._semantic_state()}
+
     def set_joints(self, joint7) -> dict:
         """直接写机器人 7 关节角（用于 FK 对齐测试，不经控制器）。"""
         sim, model = self.sim, self.model
@@ -227,6 +240,8 @@ class MujocoWorker:
                     out = self.load(req["bddl"])
                 elif cmd == "reset":
                     out = self.reset(int(req["init_state_id"]))
+                elif cmd == "reset_flat":
+                    out = self.reset_flat(req["flat_state"])
                 elif cmd == "set_joints":
                     out = self.set_joints(req["joints"])
                 elif cmd == "step":

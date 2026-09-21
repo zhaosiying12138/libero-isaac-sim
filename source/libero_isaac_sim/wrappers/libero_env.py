@@ -50,8 +50,28 @@ class IsaacLiberoEnv:
         self.settle_steps = settle_steps
         self.init_source = init_source
         self._env = None
+        self._last_obs = None
         self._step_count = 0
         self._current_init_id = 0
+
+    def _joint_hold_settle(self):
+        """用关节位置目标（而非 OSC）把手臂钉在初始关节角上 settle。"""
+        env = self._env
+        robot = env.scene["robot"]
+        arm_ids, _ = robot.find_joints(["robot0_joint[1-7]"])
+        grip_ids, _ = robot.find_joints(["gripper0_finger_joint[12]"])
+        # 直接用底层 API：写关节位置目标（绕过动作管理器）
+        current = robot.data.joint_pos.torch[0].clone()
+        # 夹爪初始保持 demo 起始 qpos（关节钉住 settle 已包含，无需改）
+        pass
+        for _ in range(self.settle_steps):
+            robot.set_joint_position_target(current.unsqueeze(0))
+            robot.write_data_to_sim()
+            env.sim.step(render=False)
+            robot.update(env.sim.get_physics_dt())
+            env.scene.update(env.sim.get_physics_dt())
+        obs = env.observation_manager.compute(update_history=True)
+        self._last_obs = obs
 
     # ------------------------------------------------------------------
     def _ensure_env(self):
@@ -88,16 +108,49 @@ class IsaacLiberoEnv:
             term.params["init_source"] = self.init_source
 
         obs, _ = self._env.reset()
-        zero = torch.zeros((1, 7))
-        for _ in range(self.settle_steps):
-            obs, _, _, _, _ = self._env.step(zero)
+        # settle：关节位置钉住（消除两个控制器各自的零姿态漂移差异，
+        # 使回放起点与录制起点精确一致），夹爪闭合并齐 demo 首段语义
+        self._joint_hold_settle()
+        obs = self._last_obs if self._last_obs is not None else obs
+        self._step_count = 0
+        return self._to_libero_obs(obs)
+
+    def reset_from_semantics(self, sem: dict) -> dict:
+        """从任意语义状态复位（分段回放的段起点）。
+
+        sem 结构：{"robot_joint_pos": [7], "gripper_qpos": [2],
+                   "bodies": {name: {"pos","rotmat"}}, "joints": {name: [...]}}
+        """
+        self._ensure_env()
+        self._env.reset()
+        from libero_isaac_sim.envs.mdp.events import _apply_state
+        from libero_isaac_sim.semantics.task_spec import EntityState, InitState, load_task
+
+        task = load_task(self.task_name, self.cache_dir)
+        state = InitState(
+            robot_joint_pos=np.asarray(sem["robot_joint_pos"], dtype=float),
+            gripper_qpos=np.asarray(sem["gripper_qpos"], dtype=float),
+        )
+        for name, b in sem["bodies"].items():
+            joints = sem.get("joints", {}).get(name)
+            state.entities[name] = EntityState(
+                name=name,
+                pos=np.asarray(b["pos"], dtype=float),
+                rotmat=np.asarray(b["rotmat"], dtype=float).reshape(3, 3),
+                joints=np.asarray(joints, dtype=float) if joints is not None else None,
+            )
+        _apply_state(self._env, 0, task, state)
+        self._joint_hold_settle()
+        obs = self._last_obs
         self._step_count = 0
         return self._to_libero_obs(obs)
 
     def step(self, action) -> tuple[dict, float, bool, dict]:
         """7 维 LIBERO 动作（OSC_POSE 语义）。"""
         assert self._env is not None, "先 reset"
-        a = torch.as_tensor(action, dtype=torch.float32).reshape(1, 7)
+        a = torch.as_tensor(action, dtype=torch.float32).reshape(1, 7).clone()
+        # 夹爪符号约定：LIBERO +1=闭合/-1=张开；Isaac 二值项 action<0→close。
+        a[:, 6] = -a[:, 6]
         obs, reward, terminated, truncated, info = self._env.step(a)
         self._step_count += 1
         success = bool(terminated[0])

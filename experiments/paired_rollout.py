@@ -83,6 +83,9 @@ class IsaacBridge:
     def reset(self, k):
         return self._call(cmd="reset", init_state_id=int(k))["state"]
 
+    def reset_semantics(self, sem):
+        return self._call(cmd="reset_semantics", semantics=sem)["state"]
+
     def step(self, action):
         return self._call(cmd="step", action=[float(a) for a in action])
 
@@ -116,14 +119,47 @@ def _rot_err_deg(rotmat_a9, rotmat_b9) -> float:
     return float(np.degrees(np.arccos(c)))
 
 
+def _flat_to_semantic(task_name: str, flat_state) -> dict:
+    """flat MuJoCo 状态 → 语义状态（经一次临时 mujoco env 转换，带磁盘缓存）。"""
+    import hashlib
+
+    key = hashlib.sha256(np.asarray(flat_state).tobytes()).hexdigest()[:16]
+    cache_path = os.path.join(CACHE, "semantic_cache", task_name, f"{key}.json")
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            return json.load(f)
+    # 在 mujoco 环境里转换（子进程）
+    worker = MujocoBridge()
+    worker.load(os.path.join(LIBERO_REPO, f"libero/libero/bddl_files/libero_10/{task_name}.bddl"))
+    sem = worker.reset_flat(flat_state)
+    worker.close()
+    # worker 返回的 semantic state 与 converter 格式一致（bodies/pos/rotmat/joints + 机器人）
+    out = {
+        "robot_joint_pos": sem["robot_joint_pos"],
+        "gripper_qpos": sem["gripper_qpos"],
+        "bodies": sem["bodies"],
+        "joints": sem["joints"],
+    }
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump(out, f)
+    return out
+
+
 def paired_rollout(
     task_name: str,
     demo_index: int,
     render: bool = False,
     max_steps: int | None = None,
+    segment: tuple[int, int] | None = None,
 ) -> dict:
     """执行一条 demo 的双仿真锁步回放，返回指标字典。"""
-    actions = load_demo_actions(task_name, demo_index)
+    actions_all = load_demo_actions(task_name, demo_index)
+    if segment is not None:
+        t0, t1 = segment
+        actions = actions_all[t0:t1]
+    else:
+        actions = actions_all
     if max_steps is not None:
         actions = actions[:max_steps]
 
@@ -132,8 +168,19 @@ def paired_rollout(
     isa = IsaacBridge()
     isa.load(task_name)
 
-    s_mj = mj.reset(demo_index)
-    s_isa = isa.reset(demo_index)
+    if segment is None:
+        s_mj = mj.reset(demo_index)
+        s_isa = isa.reset(demo_index)
+    else:
+        # 段起点：demo 的 states[t0]（录制时的完整仿真状态）
+        import h5py
+
+        hdf5 = os.path.join(LIBERO_REPO, "libero/datasets/libero_10", f"{task_name}_demo.hdf5")
+        with h5py.File(hdf5, "r") as f:
+            flat0 = np.asarray(f["data"][f"demo_{demo_index}"]["states"][segment[0]])
+        s_mj = mj.reset_flat(flat0)
+        sem0 = _flat_to_semantic(task_name, flat0)
+        s_isa = isa.reset_semantics(sem0)
 
     # 谓词层：我方谓词库在两侧语义状态上分别求值
     from libero_isaac_sim.semantics.predicates import PredicateLib
@@ -192,8 +239,11 @@ def paired_rollout(
         if render and t % 10 == 0:
             tmp = tempfile.mkdtemp(prefix="paired_")
             os.makedirs(os.path.join(OUT_DIR, task_name, f"demo_{demo_index}"), exist_ok=True)
-            mj.render("agentview", os.path.join(OUT_DIR, task_name, f"demo_{demo_index}", f"mj_{t:04d}.png"))
-            isa.render("agentview", os.path.join(OUT_DIR, task_name, f"demo_{demo_index}", f"isa_{t:04d}.png"))
+            outdir = os.path.join(OUT_DIR, task_name, f"demo_{demo_index}")
+            mj.render("agentview", os.path.join(outdir, f"mj_{t:04d}.png"))
+            isa.render("agentview", os.path.join(outdir, f"isa_{t:04d}.png"))
+            mj.render("robot0_eye_in_hand", os.path.join(outdir, f"mj_wrist_{t:04d}.png"))
+            isa.render("robot0_eye_in_hand", os.path.join(outdir, f"isa_wrist_{t:04d}.png"))
         t += 1
 
     # 终局判决
@@ -216,6 +266,7 @@ def paired_rollout(
         "task": task_name,
         "demo_index": demo_index,
         "num_steps": len(actions),
+        "segment": list(segment) if segment is not None else None,
         "ee_pos_rmse_mm": float(np.sqrt(np.mean(np.square(ee_pos_err))) * 1000),
         "ee_pos_max_mm": float(np.max(ee_pos_err) * 1000),
         "ee_rot_err_mean_deg": float(np.mean(ee_rot_err)),
@@ -248,17 +299,20 @@ def main():
     parser.add_argument("--demos", type=str, default="0", help="逗号分隔 demo 序号")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--segment", type=str, default=None,
+                        help="分段回放 t0:t1（从 demo states[t0] 复位双仿真）")
     args = parser.parse_args()
 
     results = []
     for d in [int(x) for x in args.demos.split(",")]:
-        r = paired_rollout(args.task, d, render=args.render, max_steps=args.max_steps)
+        seg = tuple(int(v) for v in args.segment.split(":")) if args.segment else None
+        r = paired_rollout(args.task, d, render=args.render, max_steps=args.max_steps, segment=seg)
         results.append(r)
         print(
             f"[paired] demo_{d}: ee_rmse={r['ee_pos_rmse_mm']:.1f}mm "
             f"谓词逐步一致率={r['predicate_step_agree']:.3f} "
             f"判决: mujoco官方={r['verdict_mujoco_official']} isaac={r['verdict_isaac_env']} "
-            f"一致={r['verdict_agree']}"
+            f"一致={r['verdict_agree']} 段={r.get('segment')}"
         )
     out = os.path.join(OUT_DIR, args.task, "summary.json")
     with open(out, "w") as f:

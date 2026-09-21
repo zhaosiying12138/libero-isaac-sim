@@ -66,6 +66,9 @@ class MujocoBridge:
     def reset(self, init_state_id: int) -> dict:
         return self._call(cmd="reset", init_state_id=int(init_state_id))["state"]
 
+    def reset_flat(self, flat_state) -> dict:
+        return self._call(cmd="reset_flat", flat_state=[float(v) for v in flat_state])["state"]
+
     def set_joints(self, joint7) -> dict:
         return self._call(cmd="set_joints", joints=[float(v) for v in joint7])["state"]
 

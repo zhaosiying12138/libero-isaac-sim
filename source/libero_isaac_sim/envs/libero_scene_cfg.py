@@ -164,8 +164,8 @@ def build_scene_cfg(
             # 夹爪位置控制（二值开合）
             "panda_gripper": ImplicitActuatorCfg(
                 joint_names_expr=["gripper0_finger_joint[12]"],
-                stiffness=2000.0,
-                damping=100.0,
+                stiffness=float(os.environ.get("LIBERO_GRIPPER_STIFFNESS", "2000")),
+                damping=float(os.environ.get("LIBERO_GRIPPER_DAMPING", "100")),
             ),
         },
     )
@@ -185,6 +185,15 @@ def build_scene_cfg(
                 collision_props=sim_utils.CollisionPropertiesCfg(
                     contact_offset=0.005, rest_offset=0.0
                 ),
+                # MuJoCo 摩擦三元组的滑动分量 → PhysX 静/动摩擦
+                physics_material=sim_utils.RigidBodyMaterialCfg(
+                    static_friction=float(
+                        task.entities[name].get("geom_friction_mean", [0.95])[0]
+                    ),
+                    dynamic_friction=float(
+                        task.entities[name].get("geom_friction_mean", [0.95])[0]
+                    ),
+                ),
             ),
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
         )
@@ -200,7 +209,8 @@ def build_scene_cfg(
                     usd_path=entry["usd_path"],
                     activate_contact_sensors=True,
                     articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                        fix_root_link=True,
+                        # 基座固定由 USD 内的世界固定关节负责（避免运行时补丁
+                        # 与 newton 导入器的关节合并缺陷冲突）
                         solver_position_iteration_count=8,
                         solver_velocity_iteration_count=0,
                     ),

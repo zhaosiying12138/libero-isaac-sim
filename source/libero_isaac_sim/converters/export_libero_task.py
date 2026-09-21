@@ -413,6 +413,49 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
     return manifest
 
 
+def flat_states_to_semantics(bddl_file: str, flat_states: np.ndarray) -> list[dict]:
+    """把任意 MuJoCo 扁平状态批量转成语义状态（按 manifest 实体命名）。
+
+    供分段回放用：demo HDF5 的 ``states[t]`` 是完整仿真状态，转成
+    「实体名 → 世界位姿/关节角」后可在 Isaac 侧精确复位。
+    """
+    from libero.libero.envs import OffScreenRenderEnv
+
+    env = OffScreenRenderEnv(bddl_file_name=bddl_file, use_camera_obs=False)
+    env.reset()
+    model = env.sim.model
+    sim = env.sim
+
+    entity_names = list(env.env.objects_dict.keys()) + list(env.env.fixtures_dict.keys())
+    arm_addrs = [_qpos_addr(model, j) for j in env.robots[0].robot_model.joints]
+    gripper_addrs = [_qpos_addr(model, j) for j in env.robots[0].gripper.joints]
+
+    out = []
+    for st in flat_states:
+        env.set_init_state(np.asarray(st))
+        sim.forward()
+        entry = {
+            "robot_joint_pos": [float(sim.data.qpos[a]) for a in arm_addrs[:7]],
+            "gripper_qpos": [float(sim.data.qpos[a]) for a in gripper_addrs[:2]],
+            "bodies": {},
+            "joints": {},
+        }
+        for name in entity_names:
+            body_id = env.env.obj_body_id[name]
+            entry["bodies"][name] = {
+                "pos": np.array(sim.data.body_xpos[body_id]).tolist(),
+                "rotmat": _quat_wxyz_to_mat(sim.data.body_xquat[body_id]).reshape(-1).tolist(),
+            }
+            obj = env.env.get_object(name)
+            jns = list(obj.joints) if obj.joints is not None else []
+            jns = [j for j in jns if int(model.jnt_type[model.joint_name2id(j)]) != 0]
+            if jns:
+                entry["joints"][name] = [float(sim.data.qpos[_qpos_addr(model, j)]) for j in jns]
+        out.append(entry)
+    env.close()
+    return out
+
+
 def export_demo_init_states(bddl_file: str, demo_hdf5: str, out_dir: str) -> None:
     """从 demo HDF5 的 attrs.init_state 提取每组示范的真实初始语义状态。
 

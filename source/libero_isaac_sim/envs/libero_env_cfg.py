@@ -63,15 +63,17 @@ class LiberoActionsCfg:
             motion_stiffness_task=OSC_KP,
             motion_damping_ratio_task=OSC_DAMPING_RATIO,
             motion_control_axes_task=[1, 1, 1, 1, 1, 1],
-            nullspace_control=os.environ.get("LIBERO_OSC_NULLSPACE", "position"),
+            nullspace_control=os.environ.get("LIBERO_OSC_NULLSPACE", "none"),
         ),
         position_scale=0.05,
         orientation_scale=0.5,
         nullspace_joint_pos_target=(
-            "default" if os.environ.get("LIBERO_OSC_NULLSPACE", "position") == "position" else "none"
+            "default" if os.environ.get("LIBERO_OSC_NULLSPACE", "none") == "position" else "none"
         ),
     )
 
+    # 注意符号差异：LIBERO 数据集 +1=闭合/-1=张开；Isaac BinaryJointPositionAction
+    # 是 action<0→close。符号翻转统一在 facade.step 完成（对外保持 LIBERO 约定）。
     gripper: BinaryJointPositionActionCfg = BinaryJointPositionActionCfg(
         asset_name="robot",
         joint_names=["gripper0_finger_joint[12]"],
@@ -184,9 +186,11 @@ def make_libero_env_cfg(
     cfg.terminations = LiberoTerminationsCfg()
     cfg.rewards = LiberoRewardsCfg()
 
-    cfg.decimation = 6  # 120 Hz 物理 / 6 = 20 Hz 控制
+    # 与 robosuite/MuJoCo 对齐：sim dt=1/500（MuJoCo 默认 0.002s），
+    # decimation=25 → 控制 20 Hz 不变
+    cfg.decimation = 25
     cfg.episode_length_s = 30.0  # 600 步 × 20 Hz，与官方评测一致
-    cfg.sim.dt = 1.0 / 120.0
+    cfg.sim.dt = 1.0 / 500.0
     cfg.sim.device = "cpu"  # WSL2 上 PhysX GPU 不可用；详见 README 风险节
     cfg.sim.render_interval = 2
     return cfg
