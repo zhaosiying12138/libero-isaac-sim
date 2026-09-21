@@ -47,53 +47,45 @@ OBJECT_ASSET_DIRS = [
 ]
 
 
-def find_object_xml(category: str) -> str:
-    """按类别名定位 LIBERO 物体 MJCF。"""
+def find_object_xml(category: str, prefer_sanitized: bool = True) -> str:
+    """按类别名定位 LIBERO 物体 MJCF；优先使用净化（.msh→.obj）后的版本。"""
     for d in OBJECT_ASSET_DIRS:
-        # 目录形式：<dir>/<category>/<category>.xml
         p = os.path.join(LIBERO_ASSETS, d, category, f"{category}.xml")
         if os.path.exists(p):
+            sanitized = p.replace(".xml", "_sanitized.xml")
+            if prefer_sanitized and os.path.exists(sanitized):
+                return sanitized
             return p
-    # articulated_objects 是平铺形式：<category>.xml
     p = os.path.join(LIBERO_ASSETS, "articulated_objects", f"{category}.xml")
     if os.path.exists(p):
+        sanitized = p.replace(".xml", "_sanitized.xml")
+        if prefer_sanitized and os.path.exists(sanitized):
+            return sanitized
         return p
     raise FileNotFoundError(f"找不到类别 {category} 的 MJCF")
 
 
 def inject_free_joint(xml_path: str, out_path: str, damping: float = 0.0005) -> str:
-    """把自由关节注入到含 geom 的第一个 body，结果写到 out_path。
+    """在物体顶层 body 注入自由关节，结果写到 out_path。
 
-    LIBERO 物体 XML 的常见结构是匿名外层 body 包裹具名内层 body；
-    robosuite 运行时把自由关节加在它提取的物体 body 上。这里选择
-    第一个拥有 geom 的 body 注入，语义等价。
+    与 robosuite 的运行时行为一致：自由关节加在物体 XML 的顶层 body
+    （即组合模型中带 ``_main`` 后缀的那个 body）上；内层 body 无关节，
+    编译时刚性融合进顶层 body，sites 也随之运动。这样 USD 侧只产生
+    一个浮动刚体/articulation，不会出现嵌套刚体。
     """
     tree = ET.parse(xml_path)
     root = tree.getroot()
     worldbody = root.find("worldbody")
     assert worldbody is not None, f"{xml_path} 缺少 worldbody"
 
-    def _first_body_with_geom(body):
-        if body.findall("geom"):
-            return body
-        for child in body.findall("body"):
-            found = _first_body_with_geom(child)
-            if found is not None:
-                return found
-        return None
-
-    target = None
-    for body in worldbody.findall("body"):
-        target = _first_body_with_geom(body)
-        if target is not None:
-            break
-    assert target is not None, f"{xml_path} 找不到含 geom 的 body"
+    top_bodies = worldbody.findall("body")
+    assert top_bodies, f"{xml_path} 的 worldbody 为空"
+    target = top_bodies[0]
     assert not target.findall("joint") and not target.findall("freejoint"), (
-        f"{xml_path} 目标 body 已有关节，按 fixture 处理即可"
+        f"{xml_path} 顶层 body 已有关节，按 fixture 处理即可"
     )
     ET.SubElement(target, "joint", {"type": "free", "damping": str(damping)})
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    # ET 会丢失 DOCTYPE 等 MJCF 不需要的声明；直接写出
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     tree.write(out_path, encoding="unicode")
     return out_path
 
@@ -119,6 +111,80 @@ def convert_mjcf(
     return converter.usd_path
 
 
+def fix_object_physics(usd_path: str, mass: float, inertia_diag: list, com_local: list) -> dict:
+    """转换后修正刚体物理参数与结构。
+
+    Isaac 的 MJCF 导入器对 LIBERO 物体的典型输出问题：
+    1. 每个 geom prim 被写 ``MassAPI mass=0.0``（不展开 MJCF density 语义）；
+    2. 匿名外层 body 与具名内层 body 都带 RigidBodyAPI（嵌套刚体非法）；
+    3. 无关节物体也带 ArticulationRootAPI。
+
+    修正：清几何级零质量；只保留最外层刚体的 RigidBodyAPI（内层刚体的碰撞
+    几何按 PhysX 规则归属于外层刚体）；无关节时剥离 ArticulationRootAPI；
+    按 MuJoCo 导出值在最外层刚体上写总质量/质心/对角惯性。
+    """
+    from pxr import Gf, Usd, UsdPhysics
+
+    stage = Usd.Stage.Open(usd_path)
+    cleared = 0
+    body_prims = []
+    articulation_roots = []
+    joint_count = 0
+    for prim in stage.Traverse():
+        if prim.HasAPI(UsdPhysics.MassAPI):
+            attr = UsdPhysics.MassAPI(prim).GetMassAttr()
+            if attr and attr.HasAuthoredValue() and float(attr.Get()) == 0.0:
+                attr.Clear()
+                cleared += 1
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            body_prims.append(prim)
+        if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+            articulation_roots.append(prim)
+        if prim.IsA(UsdPhysics.Joint):
+            joint_count += 1
+
+    assert body_prims, f"{usd_path} 没有刚体"
+    # 保留最外层刚体（遍历序最浅者），剥掉嵌套刚体的 RigidBodyAPI
+    body_prims.sort(key=lambda p: len(str(p.GetPath())))
+    top_body = body_prims[0]
+    stripped_nested = 0
+    for prim in body_prims[1:]:
+        prim.RemoveAPI(UsdPhysics.RigidBodyAPI)
+        stripped_nested += 1
+
+    mass_api = UsdPhysics.MassAPI.Apply(top_body)
+    mass_api.GetMassAttr().Set(float(mass))
+    if com_local is not None:
+        mass_api.GetCenterOfMassAttr().Set(Gf.Vec3f(*[float(v) for v in com_local]))
+    if inertia_diag is not None:
+        mass_api.GetDiagonalInertiaAttr().Set(Gf.Vec3f(*[float(v) for v in inertia_diag]))
+
+    stripped_articulation = False
+    # 单刚体物体：自由关节被导入器表达为「世界↔body 的 6DOF 关节 + ArticulationRoot」，
+    # 物理上等价于自由刚体。剥掉关节 prim 与 ArticulationRootAPI，转成普通 RigidBody，
+    # 以便用 RigidObjectCfg 管理（reset 写根位姿即可）。
+    if articulation_roots and len(body_prims) == 1:
+        removed_joints = 0
+        for prim in list(stage.Traverse()):
+            if prim.IsA(UsdPhysics.Joint):
+                prim.GetStage().RemovePrim(prim.GetPath())
+                removed_joints += 1
+        for root in articulation_roots:
+            root.RemoveAPI(UsdPhysics.ArticulationRootAPI)
+        stripped_articulation = True
+        joint_count = 0
+
+    stage.GetRootLayer().Save()
+    return {
+        "cleared_zero_mass": cleared,
+        "num_rigid_bodies_before": len(body_prims),
+        "nested_rigid_bodies_stripped": stripped_nested,
+        "articulation_stripped": stripped_articulation,
+        "mass_authored": float(mass),
+        "body_prim": str(top_body.GetPath()),
+    }
+
+
 def audit_usd(usd_path: str) -> dict:
     """转换产物体检：prim 结构、关节、质量、纹理引用。"""
     from pxr import Usd, UsdPhysics
@@ -133,24 +199,23 @@ def audit_usd(usd_path: str) -> dict:
         "missing_refs": [],
     }
     for prim in stage.Traverse():
-        if prim.GetTypeName() == "Xform" or prim.IsA(UsdPhysics.RigidBodyAPI):
-            pass
         if prim.IsA(UsdPhysics.RigidBodyAPI):
             report["bodies"].append(str(prim.GetPath()))
         if prim.IsA(UsdPhysics.Joint):
             report["joints"].append(str(prim.GetPath()))
-        mass_api = UsdPhysics.MassAPI(prim)
-        if mass_api:
-            mass_attr = mass_api.GetMassAttr()
+        if prim.HasAPI(UsdPhysics.MassAPI):
+            mass_attr = UsdPhysics.MassAPI(prim).GetMassAttr()
             if mass_attr and mass_attr.HasAuthoredValue():
                 report["total_mass"] += float(mass_attr.Get())
     default_prim = stage.GetDefaultPrim()
     if default_prim:
         report["root_prims"] = [str(c.GetPath()) for c in default_prim.GetChildren()]
     # 纹理引用存活检查
+    from pxr import Sdf
+
     for prim in stage.Traverse():
         for attr in prim.GetAttributes():
-            if attr.GetTypeName() == "asset":
+            if attr.GetTypeName() == Sdf.ValueTypeNames.Asset:
                 asset_path = attr.Get()
                 if asset_path is not None:
                     p = str(asset_path.path)
@@ -163,11 +228,13 @@ def audit_usd(usd_path: str) -> dict:
 
 def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> dict:
     """按任务 manifest 转换全部所需资产。"""
+    from libero_isaac_sim.converters.asset_manifest import AssetRegistry
     from libero_isaac_sim.semantics.task_spec import load_task
 
     task = load_task(task_name, cache_dir)
     usd_root = os.path.join(cache_dir, "usd")
     tmp_dir = os.path.join(cache_dir, "mjcf_patched")
+    registry = AssetRegistry(cache_dir)
     results = {}
 
     # 1. 物体与 fixture
@@ -175,20 +242,39 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
         category = entity["category"]
         xml_path = find_object_xml(category)
         if entity["kind"] == "object":
-            patched = os.path.join(tmp_dir, f"{category}.xml")
-            # 注入自由关节的 MJCF 必须与原始资产同目录（网格/纹理相对路径），
-            # 因此把 patched 文件写到原目录旁的镜像结构里并复制引用资产
             patched = _prepare_patched_tree(xml_path, tmp_dir, category)
             usd_dir = os.path.join(usd_root, "objects", category)
             usd_path = convert_mjcf(patched, usd_dir, fix_base=False)
+            src_xml = patched
+            fix_info = fix_object_physics(
+                usd_path,
+                mass=entity["mass"],
+                inertia_diag=entity.get("inertia"),
+                com_local=entity.get("com_local"),
+            )
+            print(f"[fix] {name}: 质量 {fix_info['mass_authored']:.4f} kg，"
+                  f"嵌套刚体剥离 {fix_info['nested_rigid_bodies_stripped']}，"
+                  f"articulation_stripped={fix_info['articulation_stripped']}")
         else:
             usd_dir = os.path.join(usd_root, "fixtures", category)
             usd_path = convert_mjcf(xml_path, usd_dir, fix_base=True)
+            src_xml = xml_path
+            fix_info = {}
         report = audit_usd(usd_path)
+        report.update(fix_info)
         report["category"] = category
         report["entity_name"] = name
         report["fix_base"] = entity["kind"] == "fixture"
         results[name] = report
+        registry.register(
+            entity_name=name,
+            category=category,
+            kind=entity["kind"],
+            usd_path=usd_path,
+            source_mjcf=src_xml,
+            fix_base=entity["kind"] == "fixture",
+            report=report,
+        )
         report_path = os.path.join(usd_root, f"_report_{category}.json")
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
         with open(report_path, "w") as f:
@@ -199,14 +285,27 @@ def convert_task_assets(task_name: str, cache_dir: str = DEFAULT_CACHE_DIR) -> d
 
     # 2. arena 场景外壳
     scene_xml = task.arena["scene_xml"]
-    arena_dir = os.path.join(usd_root, "arenas")
+    sanitized_scene = scene_xml.replace(".xml", "_sanitized.xml")
+    if os.path.exists(sanitized_scene):
+        scene_xml = sanitized_scene
+    arena_dir = os.path.join(usd_root, "arenas", os.path.basename(os.path.dirname(scene_xml)))
     os.makedirs(arena_dir, exist_ok=True)
-    arena_usd = convert_mjcf(scene_xml, arena_dir, fix_base=True, import_sites=True)
+    arena_usd = convert_mjcf(scene_xml, arena_dir, fix_base=True)
     arena_report = audit_usd(arena_usd)
     arena_report["scene_xml"] = scene_xml
     with open(os.path.join(arena_dir, "_report_arena.json"), "w") as f:
         json.dump(arena_report, f, indent=2, default=str)
     results["_arena"] = arena_report
+    registry.register(
+        entity_name="_arena",
+        category="arena",
+        kind="arena",
+        usd_path=arena_usd,
+        source_mjcf=scene_xml,
+        fix_base=True,
+        report=arena_report,
+    )
+    registry.save()
     print(f"[convert] arena -> {arena_usd}; missing_refs={len(arena_report['missing_refs'])}")
     return results
 

@@ -172,6 +172,8 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
         body_id = env.env.obj_body_id[name]
         entry["mass"] = float(model.body_mass[body_id])
         entry["inertia"] = [float(v) for v in model.body_inertia[body_id]]
+        entry["com_local"] = [float(v) for v in model.body_ipos[body_id]]
+        entry["inertia_quat_wxyz"] = [float(v) for v in model.body_iquat[body_id]]
         # 收集该 body 树（含子 body）内所有 geom 的摩擦均值，供物理审计参考
         geoms = [g for g in range(model.ngeom) if model.geom_bodyid[g] == body_id]
         if geoms:
@@ -205,17 +207,34 @@ def export_task(bddl_file: str, out_dir: str, num_init_states: int | None = None
 
     # ------------------------------------------------------------------
     # 2. site region 定义：局部位姿 + 尺寸（相对父 body）
+    #    局部变换用「site 世界位姿 @ 父 body 世界位姿⁻¹」构造，与 XML 坐标系无关。
     # ------------------------------------------------------------------
     sites = {}
+    sim.forward()
     for site_name, site_obj in env.env.object_sites_dict.items():
         size = site_obj.size
         if isinstance(size, str):
             size = [float(v) for v in size.split()]
+        sid = model.site_name2id(site_name)
+        site_world_pos = np.array(sim.data.site_xpos[sid])
+        site_world_mat = np.array(sim.data.site_xmat[sid]).reshape(3, 3)
+        parent_bid = int(model.site_bodyid[sid])
+        parent_body = model.body_id2name(parent_bid)
+        if parent_bid > 0 and parent_body:
+            pb_pos = np.array(sim.data.body_xpos[parent_bid])
+            pb_mat = _quat_wxyz_to_mat(sim.data.body_xquat[parent_bid])
+            local_mat = pb_mat.T @ site_world_mat
+            local_pos = pb_mat.T @ (site_world_pos - pb_pos)
+        else:
+            local_mat = site_world_mat
+            local_pos = site_world_pos
         sites[site_name] = {
             "parent_name": site_obj.parent_name,
+            "parent_body": parent_body,
             "size": [float(v) for v in np.atleast_1d(size)],
-            "local_pos": [float(v) for v in np.atleast_1d(site_obj.site_pos)],
-            "local_quat_wxyz": [float(v) for v in np.atleast_1d(site_obj.site_quat)],
+            "local_pos": [float(v) for v in local_pos],
+            "local_rotmat": local_mat.reshape(-1).tolist(),
+            "world_pos_ref": [float(v) for v in site_world_pos],
             "site_type": site_obj.site_type,
             "joints": list(site_obj.joints) if site_obj.joints else [],
         }
