@@ -241,7 +241,7 @@ demo_0 锁步回放的 EE 位置误差（蓝，左轴 mm）与姿态误差（红
 
 文章计划里的最后一组证据是同一公开 checkpoint 在两个后端上的闭环成功率对比。我们把 OpenVLA-OFT 的 libero-10 微调 checkpoint（`moojink/openvla-7b-oft-finetuned-libero-10`）封装成 JSON Lines 推理服务（`experiments/vla_policy_server.py`），两个后端各写一个 worker（`vla_eval_worker_mujoco.py` / `vla_eval_worker_isaac.py`），评测协议与 openvla-oft 官方逐行对齐（官方 50 组 init states、前 10 步 dummy、8 步 chunk、520 步上限、180° 旋转 + 224 lanczos 缩放的图像预处理）。服务器输出与 openvla-oft 的 `get_vla_action` 在同一帧上逐位一致。
 
-如实说明：本机（WSL2 + RTX 5090）上 openvla-oft 官方评测脚本在 robosuite 1.4.1 + mujoco 3.2.3 组合下段错误崩溃，我们没能跑出官方参考成功率；闭环管线本身功能完整（两侧都能 rollout、渲染、判成功），成功率的对齐验证留作后续在有原生 Linux GPU 机器上完成。这不影响本文的主结论——任务语义无损迁移与开环/分段等价性证据已经闭环。
+如实说明：本机（WSL2 + RTX 5090）上 openvla-oft 官方评测脚本在 robosuite 1.4.1 + mujoco 3.2.3 组合下段错误崩溃，我们没能跑出官方参考成功率。闭环管线本身功能完整——我们在调试中逐项核实过：策略服务器输出与官方 ``get_vla_action`` 在同一观测上逐位一致；demo 动作经我们的 worker 回放能成功；官方 eval 的 ``process_action``（夹爪通道的二值化加反号）也被我们发现并补上，补上之后闭环 rollout 里夹爪的接近/闭合/搬运/张开时序与示范一致。剩余的闭环成功率对齐留作后续在原生 Linux GPU 机器上完成。这不影响本文的主结论——任务语义无损迁移与开环/分段等价性证据已经闭环。
 
 ## 六、讨论与局限
 

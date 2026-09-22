@@ -72,6 +72,22 @@ class JsonLineProc:
         self.proc.terminate()
 
 
+def _process_action(action: list[float]) -> list[float]:
+    """与 openvla-oft 官方 eval 的 process_action 一致：
+    模型输出的夹爪通道是 [0,1] 归一化值，先二值化到 ±1（>0.5→+1），再反号
+    （官方 dataloader 训练时翻转过符号，评测时翻回来）。
+    净效果：模型输出 >0.5 → 张开（-1），<0.5 → 闭合（+1）。
+    """
+    import numpy as np
+
+    a = np.asarray(action, dtype=float).copy()
+    g = a[-1]
+    g = np.sign(2 * (g - 0.0) / 1.0 - 1.0)  # normalize_gripper_action(binarize=True)
+    g = -g  # invert_gripper_action
+    a[-1] = g
+    return a.tolist()
+
+
 def _policy_infer(server: JsonLineProc, obs_pkg: dict, prompt: str) -> list[list[float]]:
     out = server.call(
         cmd="infer",
@@ -80,7 +96,7 @@ def _policy_infer(server: JsonLineProc, obs_pkg: dict, prompt: str) -> list[list
         state=obs_pkg["state"],
         prompt=prompt,
     )
-    return out["actions"]
+    return [_process_action(a) for a in out["actions"]]
 
 
 def _state_vector(state: dict) -> list[float]:
