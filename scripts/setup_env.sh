@@ -71,4 +71,25 @@ import isaaclab, isaacsim
 print('[setup] Isaac 侧 OK')
 "
 
+# ---- 可选：VLA 闭环评测环境（OpenVLA-OFT）----
+if [ "${SETUP_VLA:-0}" = "1" ]; then
+    echo "==> [可选] VLA 环境（OpenVLA-OFT，torch cu128）"
+    "$UV" venv "$EXTERNAL_DIR/venvs/vla" --python 3.10 --seed
+    "$EXTERNAL_DIR/venvs/vla/bin/pip" install -q torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+    "$EXTERNAL_DIR/venvs/vla/bin/pip" install -q -i https://pypi.org/simple \
+        "transformers==4.51.3" "timm==0.9.16" tokenizers einops accelerate peft pillow \
+        imageio imageio-ffmpeg h5py json_numpy draccus rich jsonlines wandb diffusers \
+        "huggingface-hub==0.30.2" tensorflow-cpu
+    # openvla-oft 训练链路的重依赖在推理路径不触及，用桩模块代替
+    STUBD="$EXTERNAL_DIR/venvs/vla/lib/python3.10/site-packages"
+    echo 'class DLataset: pass' > "$STUBD/dlimp.py"
+    mkdir -p "$STUBD/tensorflow_graphics/geometry"
+    echo '' > "$STUBD/tensorflow_graphics/__init__.py"
+    echo '' > "$STUBD/tensorflow_graphics/geometry/__init__.py"
+    echo 'def __getattr__(n): raise NotImplementedError("stub")' > "$STUBD/tensorflow_graphics/geometry/transformation.py"
+    echo 'def builder(*a, **k): raise NotImplementedError("stub")' > "$STUBD/tensorflow_datasets.py"
+    # checkpoint（wget 断点续传，镜像站）
+    echo "    checkpoint 下载见 scripts/download_vla_ckpt.sh"
+fi
+
 echo "==> 完成。下一步：bash scripts/export_and_convert_all.sh"
