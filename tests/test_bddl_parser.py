@@ -61,8 +61,12 @@ def test_compare_with_official_parser():
     for path in sorted(glob.glob(os.path.join(BDDL_DIR, "*.bddl"))):
         ours = parse_bddl(path)
         official = bddl_utils.robosuite_parse_problem(path)
-        assert ours["problem_name"] == official["problem_name"]
-        assert ours["language"] == official["language_instruction"]
+        # 官方 robosuite_parse_problem 的 problem_name 是小写路由键、language 是词列表
+        assert ours["problem_name"].lower() == official["problem_name"].lower()
+        official_lang = official["language_instruction"]
+        if isinstance(official_lang, list):
+            official_lang = " ".join(official_lang)
+        assert ours["language"] == official_lang
         assert ours["objects"] == official["objects"], os.path.basename(path)
         assert ours["fixtures"] == official["fixtures"], os.path.basename(path)
         assert set(ours["regions"]) == set(official["regions"]), os.path.basename(path)
