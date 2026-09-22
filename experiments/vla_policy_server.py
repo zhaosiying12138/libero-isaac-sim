@@ -37,7 +37,6 @@ sys.path.insert(0, OPENVLA_OFT_REPO)
 
 def _load_policy():
     import torch
-    from experiments.robot.libero.run_libero_eval import GenerateConfig
     from experiments.robot.openvla_utils import (
         get_action_head,
         get_processor,
@@ -45,20 +44,34 @@ def _load_policy():
         get_vla,
     )
 
-    cfg = GenerateConfig(
-        pretrained_checkpoint=CKPT,
-        model_family="openvla",
-        use_l1_regression=True,
-        num_images_in_input=2,
-        use_proprio=True,
-        center_crop=True,
-        unnorm_key="libero_10_no_noops",
-        task_suite_name="libero_10",
-    )
+    # 自包含配置：与 openvla-oft 的 GenerateConfig 字段一致，但不引入
+    # run_libero_eval（它会连带 LIBERO/MuJoCo 依赖链，服务器侧不需要）
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Cfg:
+        model_family: str = "openvla"
+        pretrained_checkpoint: str = CKPT
+        use_l1_regression: bool = True
+        use_diffusion: bool = False
+        num_diffusion_steps_train: int = 50
+        num_diffusion_steps_inference: int = 50
+        use_film: bool = False
+        num_images_in_input: int = 2
+        use_proprio: bool = True
+        center_crop: bool = True
+        num_open_loop_steps: int = 8
+        lora_rank: int = 32
+        unnorm_key: str = "libero_10_no_noops"
+        load_in_8bit: bool = False
+        load_in_4bit: bool = False
+        seed: int = 7
+
+    cfg = _Cfg()
     vla = get_vla(cfg)
     processor = get_processor(cfg)
     action_head = get_action_head(cfg, llm_dim=vla.llm_dim)
-    proprio_projector = get_proprio_projector(cfg, vla.llm_dim)
+    proprio_projector = get_proprio_projector(cfg, vla.llm_dim, proprio_dim=8)
     return cfg, vla, processor, action_head, proprio_projector
 
 
