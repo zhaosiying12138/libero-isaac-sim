@@ -81,6 +81,14 @@ def _load_image(path: str) -> np.ndarray:
     return imageio.imread(path)
 
 
+def _preprocess(img: np.ndarray) -> np.ndarray:
+    """openvla-oft prepare_observation 等价预处理：180° 旋转 + 224 lanczos 缩放。"""
+    from experiments.robot.openvla_utils import resize_image_for_policy
+
+    img = img[::-1, ::-1]
+    return resize_image_for_policy(img, 224)
+
+
 def main():
     from experiments.robot.openvla_utils import get_vla_action
 
@@ -93,10 +101,15 @@ def main():
             cmd = req["cmd"]
             if cmd == "infer":
                 obs = {
-                    "full_image": _load_image(req["image"]),
-                    "wrist_image": _load_image(req["wrist_image"]),
+                    "full_image": _preprocess(_load_image(req["image"])),
+                    "wrist_image": _preprocess(_load_image(req["wrist_image"])),
                     "state": np.asarray(req["state"], dtype=float),
                 }
+                if os.environ.get("VLA_DEBUG"):
+                    import imageio.v2 as imageio
+                    imageio.imwrite("/tmp/vla_debug_full.png", obs["full_image"])
+                    imageio.imwrite("/tmp/vla_debug_wrist.png", obs["wrist_image"])
+                    print(f"[vla-server] 预处理帧已存 /tmp/vla_debug_*.png", flush=True)
                 actions = get_vla_action(
                     cfg,
                     vla,
@@ -107,6 +120,11 @@ def main():
                     proprio_projector=proprio_projector,
                 )
                 out = {"actions": [np.asarray(a).tolist() for a in actions]}
+                if os.environ.get("VLA_DEBUG"):
+                    import numpy as _np
+                    a0 = _np.array(out["actions"][0])
+                    print(f"[vla-server] action[0]={_np.round(a0, 3).tolist()}", flush=True)
+                    print("__VLA_ACTION__" + ",".join(f"{v:.4f}" for v in a0), flush=True)
             elif cmd == "reset":
                 out = {}
             else:

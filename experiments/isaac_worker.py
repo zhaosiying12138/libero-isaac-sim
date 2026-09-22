@@ -99,11 +99,19 @@ class IsaacWorker:
         grip_ids, _ = robot.find_joints(["gripper0_finger_joint[12]"])
         origin = env.scene.env_origins[0].cpu().numpy()
 
-        # EE = grip_site 帧（hand ∘ z+0.097）
-        ee_idx = robot.find_bodies("robot0_right_hand")[0][0]
-        hand = robot.data.body_pose_w.torch[0, ee_idx].cpu().numpy()
-        hand_rot = _quat_xyzw_to_mat(hand[3:7])
-        eef_pos = (hand[:3] - origin) + hand_rot @ np.array([0.0, 0.0, 0.097])
+        # EE = grip_site 帧：优先 gripper0_eef 体（与 MuJoCo 的 grip_site 同构）；
+        # 缺失时退回 hand ∘ z+0.097
+        hand = None
+        try:
+            eef_idx = robot.find_bodies("gripper0_eef")[0][0]
+            eef_pose = robot.data.body_pose_w.torch[0, eef_idx].cpu().numpy()
+            eef_pos = eef_pose[:3] - origin
+            hand_rot = _quat_xyzw_to_mat(eef_pose[3:7])
+        except Exception:
+            ee_idx = robot.find_bodies("robot0_right_hand")[0][0]
+            hand = robot.data.body_pose_w.torch[0, ee_idx].cpu().numpy()
+            hand_rot = _quat_xyzw_to_mat(hand[3:7])
+            eef_pos = (hand[:3] - origin) + hand_rot @ np.array([0.0, 0.0, 0.097])
 
         bodies = {}
         for name in self.task.entities:

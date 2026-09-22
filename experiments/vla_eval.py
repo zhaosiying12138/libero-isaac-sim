@@ -86,7 +86,7 @@ def _policy_infer(server: JsonLineProc, obs_pkg: dict, prompt: str) -> list[list
 def _state_vector(state: dict) -> list[float]:
     """observation/state = [eef_pos(3), axisangle(eef_quat)(3), gripper_qpos(2)]。"""
     eef_pos = list(state["eef_pos"])
-    w, x, y, z = [float(v) for v in state["eef_quat_wxyz"]]
+    x, y, z, w = [float(v) for v in state["eef_quat_xyzw"]]
     # 四元数(wxyz) -> 轴角
     n = (w * w + x * x + y * y + z * z) ** 0.5 or 1.0
     w, x, y, z = w / n, x / n, y / n, z / n
@@ -118,13 +118,16 @@ def eval_backend(
         env_extra = {"OMNI_KIT_ACCEPT_EULA": "YES", "PYTHONUNBUFFERED": "1"}
 
     worker = JsonLineProc(worker_argv, cwd=ISAACLAB_DIR if backend == "isaac" else None, env_extra=env_extra)
-    task_desc = worker.call(cmd="load_task", task=task_name).get("language", task_name)
+    bddl_path = os.path.join(
+        LIBERO_REPO, "libero/libero/bddl_files/libero_10", f"{task_name}.bddl"
+    )
+    task_desc = worker.call(cmd="load_task", task=task_name, bddl=bddl_path).get("language", task_name)
 
     results = []
     for trial in range(num_trials):
         # reset：装载官方 init state，走 dummy 动作稳定
         pkg = worker.call(cmd="reset", init_state_id=trial)
-        server.call(cmd="reset")
+        policy_server.call(cmd="reset")
         for _ in range(NUM_STEPS_WAIT):
             pkg = worker.call(cmd="step", action=[0, 0, 0, 0, 0, 0, -1])
 
@@ -134,7 +137,7 @@ def eval_backend(
         for t in range(TASK_MAX_STEPS):
             if not action_queue:
                 pkg["state"] = {"eef_pos": pkg["state"]["eef_pos"],
-                            "eef_quat_wxyz": pkg["state"]["eef_quat_wxyz"],
+                            "eef_quat_xyzw": pkg["state"]["eef_quat_xyzw"],
                             "gripper_qpos": pkg["state"]["gripper_qpos"]}
             pkg["state_vec"] = _state_vector(pkg["state"])
             obs_for_policy = {"image": pkg["image"], "wrist_image": pkg["wrist_image"],

@@ -26,6 +26,7 @@ class Worker:
         self.tmpdir = tempfile.mkdtemp(prefix="vla_mj_")
 
     def load_task(self, bddl: str) -> dict:
+        self._bddl = bddl
         import torch
         from libero.libero.envs import OffScreenRenderEnv
         from libero.libero.envs.bddl_utils import get_problem_info
@@ -55,7 +56,7 @@ class Worker:
             "eef_pos": [float(v) for v in obs["robot0_eef_pos"]],
             "eef_rotmat": None,  # 服务端只需要轴角；这里给四元数让驱动算
             "gripper_qpos": [float(v) for v in obs["robot0_gripper_qpos"]],
-            "eef_quat_wxyz": [float(v) for v in obs["robot0_eef_quat"]],
+            "eef_quat_xyzw": [float(v) for v in obs["robot0_eef_quat"]],
         }
         return {"state": state, "image": img_path, "wrist_image": wrist_path}
 
@@ -67,7 +68,18 @@ class Worker:
                 cmd = req["cmd"]
                 if cmd == "load_task":
                     out = self.load_task(req["bddl"])
+                elif cmd == "reset_demo":
+                    import h5py
+                    task = os.path.splitext(os.path.basename(self._bddl))[0]
+                    with h5py.File(os.path.join(LIBERO_REPO, "libero/datasets/libero_10", f"{task}_demo.hdf5"), "r") as f:
+                        st = np.asarray(f["data"][f"demo_{req['init_state_id']}"].attrs["init_state"])
+                    self.env.set_init_state(st)
+                    self.env.sim.forward()
+                    out = self._pkg()
                 elif cmd == "reset":
+                    # 官方协议：先 env.reset() 清 episode 状态（robosuite 内部 done 闩锁），
+                    # 再装载固定初始状态覆盖随机化
+                    self.env.reset()
                     st = self._init_states[req["init_state_id"] % len(self._init_states)]
                     self.env.set_init_state(st)
                     self.env.sim.forward()

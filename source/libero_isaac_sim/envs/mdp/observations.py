@@ -30,7 +30,10 @@ def _robot(env: ManagerBasedEnv):
 
 def _eef_body_index(env: ManagerBasedEnv) -> int:
     if not hasattr(env, "_libero_eef_idx"):
-        env._libero_eef_idx = _robot(env).find_bodies("robot0_right_hand")[0][0]
+        try:
+            env._libero_eef_idx = _robot(env).find_bodies("gripper0_eef")[0][0]
+        except Exception:
+            env._libero_eef_idx = _robot(env).find_bodies("robot0_right_hand")[0][0]
     return env._libero_eef_idx
 
 
@@ -52,9 +55,11 @@ EEF_OFFSET_LOCAL = (0.0, 0.0, 0.097)  # gripper0_grip_site 相对 robot0_right_h
 
 
 def robot0_eef_pos(env: ManagerBasedEnv) -> torch.Tensor:
-    """grip_site 帧的世界位置（hand 位姿 ∘ 局部偏移）。"""
+    """grip_site 帧的世界位置（gripper0_eef 体直接读取，或 hand ∘ 偏移兜底）。"""
     robot = _robot(env)
     pose = robot.data.body_pose_w.torch[:, _eef_body_index(env)]
+    if "gripper0_eef" in robot.data.body_names:
+        return pose[:, 0:3]
     import isaaclab.utils.math as mu
 
     offset = torch.tensor(EEF_OFFSET_LOCAL, device=pose.device).expand(pose.shape[0], 3)
@@ -63,11 +68,12 @@ def robot0_eef_pos(env: ManagerBasedEnv) -> torch.Tensor:
 
 
 def robot0_eef_quat(env: ManagerBasedEnv) -> torch.Tensor:
-    """wxyz 约定（与 LIBERO obs 一致）。grip_site 与 hand 同向（局部单位旋转）。"""
+    """xyzw 约定（与 LIBERO 数据集/robosuite obs 一致；openvla 的 quat2axisangle 吃 xyzw）。
+
+    grip_site 与 hand 同向（局部单位旋转）。注意：LIBERO HDF5 的 ee_ori/obs 也是 xyzw。
+    """
     robot = _robot(env)
-    quat_xyzw = robot.data.body_pose_w.torch[:, _eef_body_index(env), 3:7]
-    w = quat_xyzw[:, 3:4]
-    return torch.cat([w, quat_xyzw[:, 0:3]], dim=-1)
+    return robot.data.body_pose_w.torch[:, _eef_body_index(env), 3:7]
 
 
 def agentview_image(env: ManagerBasedEnv) -> torch.Tensor:

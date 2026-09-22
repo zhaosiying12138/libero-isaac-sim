@@ -65,7 +65,7 @@ class Worker:
             "eef_pos": [float(v) for v in obs["robot0_eef_pos"]],
             "eef_rotmat": None,
             "gripper_qpos": [float(v) for v in obs["robot0_gripper_qpos"]],
-            "eef_quat_wxyz": [float(v) for v in obs["robot0_eef_quat"]],
+            "eef_quat_xyzw": [float(v) for v in obs["robot0_eef_quat"]],
         }
         return {"state": state, "image": img_path, "wrist_image": wrist_path}
 
