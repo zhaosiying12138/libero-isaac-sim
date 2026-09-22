@@ -165,18 +165,24 @@ reset 事件（`envs/mdp/events.py`）支持两种模式：`init_state_id=k` 精
 
 对 10 个任务各取 5 条官方示范的动作序列，做双仿真锁步回放（同初始状态、同动作）。全量结果如下表（篇幅所限任务名截断）：
 
-| 任务 | demos | EE 位置 RMSE (mm) | EE 姿态误差 (°) | 谓词逐步一致率 | 终局判决一致率 | 成功率 mj/isa |
-|---|---|---|---|---|---|---|
-| LIVING_ROOM_SCENE2 soup+sauce | 5 | 51.7±10.0 | 19.4（修正帧后） | 94.4% | 20% | 80%/0% |
-| LIVING_ROOM_SCENE2 cheese+butter | 5 | 44.7±10.7 | — | 95.3% | 0% | 100%/0% |
-| KITCHEN_SCENE3 stove+moka | 5 | 81.0±10.9 | — | 100.0% | 20% | 80%/0% |
-| KITCHEN_SCENE4 drawer+bowl | 5 | 45.1±12.8 | — | 60.4% | 20% | 80%/0% |
-| LIVING_ROOM_SCENE5 双杯双盘 | 5 | 30.8±12.5 | — | 93.2% | 20% | 80%/0% |
-| STUDY_SCENE1 book+caddy | 5 | 30.5±7.2 | — | 95.3% | 20% | 80%/0% |
-| LIVING_ROOM_SCENE6 mug+pudding | 5 | 38.9±20.6 | — | 96.4% | 40% | 60%/0% |
-| LIVING_ROOM_SCENE1 soup+cheese | 5 | 63.2±39.9 | — | 96.5% | 20% | 80%/0% |
-| KITCHEN_SCENE8 双 moka | 5 | 115.2±38.7 | — | 100.0% | 40% | 60%/0% |
-| KITCHEN_SCENE6 mug+microwave | 5 | 216.3±109.8 | — | 97.3% | 20% | 80%/0% |
+<!-- BATCH_TABLE:BEGIN -->
+
+| 任务 | demos | EE位置RMSE(mm) | EE姿态误差(°) | 谓词一致率 | 判决一致率 | κ | 成功率 mj/isa |
+|---|---|---|---|---|---|---|---|
+| LIVING_ROOM_SCENE2_put_both_the_alphabet | 5 | 51.7±10.0 | 8.0 | 94.4% | 20% | 0.00 | 80%/0% |
+| LIVING_ROOM_SCENE2_put_both_the_cream_ch | 5 | 44.7±10.7 | 7.9 | 95.3% | 0% | 0.00 | 100%/0% |
+| KITCHEN_SCENE3_turn_on_the_stove_and_put | 5 | 80.5±9.5 | 18.5 | 100.0% | 20% | 0.00 | 80%/0% |
+| KITCHEN_SCENE4_put_the_black_bowl_in_the | 5 | 47.6±11.1 | 12.8 | 60.3% | 40% | 0.00 | 60%/0% |
+| LIVING_ROOM_SCENE5_put_the_white_mug_on_ | 5 | 30.8±12.5 | 5.1 | 93.2% | 20% | 0.00 | 80%/0% |
+| STUDY_SCENE1_pick_up_the_book_and_place_ | 5 | 30.6±7.2 | 6.2 | 95.2% | 40% | 0.00 | 60%/0% |
+| LIVING_ROOM_SCENE6_put_the_white_mug_on_ | 5 | 38.9±20.6 | 6.1 | 96.4% | 40% | 0.00 | 60%/0% |
+| LIVING_ROOM_SCENE1_put_both_the_alphabet | 5 | 63.2±39.9 | 10.8 | 96.5% | 20% | 0.00 | 80%/0% |
+| KITCHEN_SCENE8_put_both_moka_pots_on_the | 5 | 115.2±38.8 | 12.9 | 100.0% | 20% | 0.00 | 80%/0% |
+| KITCHEN_SCENE6_put_the_yellow_and_white_ | 5 | 215.9±106.9 | 13.0 | 97.4% | 40% | 0.00 | 60%/0% |
+
+<!-- BATCH_TABLE:END -->
+
+读这张表
 
 读这张表要注意三点：
 
